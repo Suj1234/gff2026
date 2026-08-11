@@ -1,0 +1,24 @@
+# Standalone compose for the underwriting agent — runs ALONGSIDE the journey stack,
+# touches nothing in it. Deploy: `docker compose -f agent-compose.yml up -d --build`
+# The journey's /api route calls this at http://underwriting-agent:8899 (same docker
+# network) or http://localhost:8899 (host). LLM creds come from .env on the server.
+services:
+  underwriting-agent:
+    build: .
+    container_name: underwriting-agent
+    restart: unless-stopped
+    ports:
+      - "8899:8899"          # host:container — journey can reach it on localhost:8899
+    env_file:
+      - .env                 # LLM_MODEL, OPENAI_API_KEY, LLM_BASE_URL  (put on server)
+    networks:
+      - demo-net             # same network as india-health-onboarding + demo-gateway
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8899/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  demo-net:
+    external: true           # the network already exists (created by the demo stack)
