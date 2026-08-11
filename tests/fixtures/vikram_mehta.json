@@ -1,0 +1,43 @@
+{
+  "proposal_id": "PRP-2026-000501",
+  "evidence_bundle": {
+    "persona": "self_employed",
+    "applicant": {"age": 52, "city": "Delhi"},
+    "identity": {
+      "pan_verification": {"status": "valid", "name_match": true},
+      "ckyc": {"address_match": true},
+      "facematch": {"score": 0.97, "liveness_pass": true, "deepfake_flag": false}
+    },
+    "income": {"source": "gst_itr", "verified_amount": 1800000, "tier_flag": null},
+    "product": {"type": "individual_health", "sum_insured": 2500000, "tenure_years": 1},
+    "health_declaration": {"conditions": [], "tobacco": false, "family_history": []},
+    "ml_scores": {"fraud_score": 0.31, "anomaly_score": 0.22, "graph_score": 0.40}
+  },
+  "ambiguous_flags": [
+    {
+      "flag_id": "flg_001",
+      "flag_type": "velocity_anomaly",
+      "related_rule": "R-015",
+      "context": {
+        "applicant_age": 52,
+        "related_proposals": [
+          {"insurer": "other", "days_ago": 9, "sum_insured_band": "near_identical", "product": "health", "status": "declined"}
+        ]
+      }
+    }
+  ],
+  "mock_observations": {
+    "flg_001": {
+      "source": "abha",
+      "records": [
+        {
+          "date": "2026-06-28",
+          "type": "discharge_summary",
+          "structured_diagnosis_codes": ["I25.10"],
+          "note": "coronary artery disease; cardiac procedure ~6 weeks before application",
+          "declared_on_health_form": false
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "_note": "Salaried, all clean. Every hard gate passes, no soft flags, income covers SI, normal BMI, ML scores clean. Expected: ISSUE (decision row 6 / R-014).",
+  "input": {
+    "proposal_id": "SURESH-CLEAN-001",
+    "meta": { "channel": "whatsapp", "insurer": "Secure Insure", "persona": "salaried" },
+    "application": {
+      "applicant": {
+        "name": "Suresh Iyer",
+        "dob": "1990-03-14",
+        "gender": "male",
+        "age": 34,
+        "marital_status": "married",
+        "address": "12 MG Road, Koramangala, Bengaluru, 560034",
+        "pincode": "560034"
+      },
+      "occupation": { "declared_type": "salaried", "declared_occupation": "software_engineer", "employer_declared": "Infosys Limited" },
+      "product": { "type": "individual_health", "sum_assured": 2500000, "premium": 14000, "tenure_years": 1, "payment_mode": "annual" },
+      "financial": { "declared_annual_income": 1800000, "source_of_funds": "salary" },
+      "nominee": { "name": "Lakshmi Iyer", "relationship": "spouse" },
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 175, "weight_kg": 70, "bmi": 22.9, "conditions": [], "tobacco": false, "alcohol": false, "drugs": false, "past_medical_history": "none", "ongoing_medication": "none", "family_history": [] }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true },
+      { "type": "aadhaar_ekyc", "framework": "Aadhaar_Act", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9845012345", "provider": "Airtel", "vintage_months": 96, "ported_recently": false, "on_revocation_list": false, "holder_name": "Suresh Iyer" },
+      "pan_verify": { "status": "available", "pan": "ABCPS1234K", "pan_status": "valid", "name": "Suresh Iyer", "dob": "1990-03-14", "aadhaar_seeded": true, "address": "12 MG Road, Koramangala, Bengaluru, 560034" },
+      "aadhaar_ekyc": { "status": "available", "name": "Suresh Iyer", "dob": "1990-03-14", "address": "12 MG Road, Koramangala, Bengaluru, 560034", "photo": true },
+      "ckyc": { "status": "available", "existing_record": true, "name": "Suresh Iyer", "dob": "1990-03-14", "address": "12 MG Road, Koramangala, Bengaluru, 560034" },
+      "liveness_facematch": { "status": "available", "liveness_pass": true, "liveness_score": 0.94, "face_match_score": 0.97, "deepfake_flag": false },
+      "epfo": { "status": "available", "name": "Suresh Iyer", "employer": "Infosys Limited", "date_of_joining": "2016-07", "tenure_years": 8, "contribution_band": "16-18L", "epf_deducted_last_45d": true },
+      "itr": { "status": "available", "name": "Suresh Iyer", "latest_total_taxable_income": 1800000 },
+      "account_aggregator": { "status": "available", "name": "Suresh Iyer", "imputed_annual_income": 1790000, "income_source": "gst_itr", "avg_monthly_balance": 250000, "expense_to_income": 0.35 },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "560034", "morbidity_index": 0.2, "fraud_hotspot_flag": false },
+      "velocity_graph": { "status": "available", "velocity_score": 0.05, "shared_device_count": 0, "cross_product_count_45d": 0 },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false, "lists_checked": ["UN", "OFAC", "RBI_caution"] },
+      "abha_health_records": { "status": "consent_declined" },
+      "pharmacy": { "status": "not_requested" },
+      "ml_scores": { "fraud_score": 0.08, "anomaly_score": 0.11, "graph_score": 0.05 }
+    },
+    "documents": [],
+    "follow_up_observations": {}
+  },
+  "expected": {
+    "decision": "ISSUE",
+    "expected_outcome": "CLEAN",
+    "expected_bre_outcome": "CLEAN",
+    "expected_rulings": []
+  }
+}

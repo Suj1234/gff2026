@@ -1,0 +1,60 @@
+{
+  "_note": "Priya: recent acute medical event (surgery ~40 days ago, inside the 90-day postpone window). All hard gates pass, identity clean. POSTPONE precedes soft-rule routing (decision row 4). This is the only fixture exercising the POSTPONE Core-6 outcome and the postpone_check rule end-to-end.",
+  "input": {
+    "proposal_id": "PRIYA-POSTPONE-001",
+    "meta": { "channel": "whatsapp", "insurer": "Secure Insure", "persona": "salaried" },
+    "application": {
+      "applicant": {
+        "name": "Priya Menon",
+        "dob": "1992-07-08",
+        "gender": "female",
+        "age": 32,
+        "marital_status": "married",
+        "address": "18 Baner Road, Pune, 411045",
+        "pincode": "411045"
+      },
+      "occupation": { "declared_type": "salaried", "declared_occupation": "accountant", "employer_declared": "KPMG India" },
+      "product": { "type": "individual_health", "sum_assured": 3000000, "premium": 15000, "tenure_years": 1 },
+      "financial": { "declared_annual_income": 1600000, "source_of_funds": "salary" },
+      "nominee": { "name": "Arjun Menon", "relationship": "spouse" },
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 165, "weight_kg": 60, "bmi": 22.0, "conditions": [], "tobacco": false, "alcohol": false, "drugs": false, "past_medical_history": "recent appendectomy", "ongoing_medication": "none", "family_history": [] }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true },
+      { "type": "aadhaar_ekyc", "framework": "Aadhaar_Act", "granted": true },
+      { "type": "abha_hie_cm", "framework": "ABDM_HIE_CM", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9822033445", "provider": "Airtel", "vintage_months": 72, "ported_recently": false, "on_revocation_list": false, "holder_name": "Priya Menon" },
+      "pan_verify": { "status": "available", "pan": "BNZPM7788K", "pan_status": "valid", "name": "Priya Menon", "dob": "1992-07-08", "aadhaar_seeded": true, "address": "18 Baner Road, Pune, 411045" },
+      "aadhaar_ekyc": { "status": "available", "name": "Priya Menon", "dob": "1992-07-08", "address": "18 Baner Road, Pune, 411045", "photo": true },
+      "ckyc": { "status": "available", "existing_record": true, "name": "Priya Menon", "dob": "1992-07-08", "address": "18 Baner Road, Pune, 411045" },
+      "liveness_facematch": { "status": "available", "liveness_pass": true, "liveness_score": 0.95, "face_match_score": 0.98, "deepfake_flag": false },
+      "epfo": { "status": "available", "name": "Priya Menon", "employer": "KPMG India", "date_of_joining": "2018-06", "tenure_years": 6, "contribution_band": "14-16L", "epf_deducted_last_45d": true },
+      "itr": { "status": "available", "name": "Priya Menon", "latest_total_taxable_income": 1600000 },
+      "account_aggregator": { "status": "available", "name": "Priya Menon", "imputed_annual_income": 1580000, "income_source": "gst_itr", "avg_monthly_balance": 180000, "expense_to_income": 0.4 },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "411045", "morbidity_index": 0.28, "fraud_hotspot_flag": false },
+      "velocity_graph": { "status": "available", "velocity_score": 0.08, "shared_device_count": 0, "cross_product_count_45d": 0 },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false, "lists_checked": ["UN", "OFAC", "RBI_caution"] },
+      "abha_health_records": {
+        "status": "available",
+        "diagnoses": [],
+        "icd_codes": [],
+        "prescriptions": [],
+        "days_since_acute_event": 40,
+        "unstructured_notes": ["laparoscopic appendectomy performed ~40 days before application"]
+      },
+      "pharmacy": { "status": "not_requested" },
+      "ml_scores": { "fraud_score": 0.06, "anomaly_score": 0.09, "graph_score": 0.04 }
+    },
+    "documents": [],
+    "follow_up_observations": {}
+  },
+  "expected": {
+    "decision": "POSTPONE",
+    "expected_outcome": "POSTPONE",
+    "expected_bre_outcome": "POSTPONE"
+  }
+}

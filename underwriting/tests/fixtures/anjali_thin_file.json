@@ -1,0 +1,68 @@
+{
+  "_note": "Anjali: income rests on Account-Aggregator fallback only (no ITR/EPFO) and requested SI exceeds the age income-multiple -> thin_file + income_thin_file soft flags. Everything else clean. Phase 1 (no LLM): GREY-ZONE -> REFER. With the LLM (Phase 3) the plan expects STEP_UP (request bank_statement) -> ISSUE. expected.decision holds the Phase-1 deterministic result; expected.decision_with_llm records the Phase-3 target.",
+  "input": {
+    "proposal_id": "ANJALI-THIN-001",
+    "meta": { "channel": "whatsapp", "insurer": "Secure Insure", "persona": "self_employed" },
+    "application": {
+      "applicant": {
+        "name": "Anjali Nair",
+        "dob": "1994-11-02",
+        "gender": "female",
+        "age": 30,
+        "marital_status": "single",
+        "address": "44 Residency Road, Fort Kochi, Ernakulam, 682001",
+        "pincode": "682001"
+      },
+      "occupation": { "declared_type": "self_employed", "declared_occupation": "freelance_designer" },
+      "product": { "type": "individual_health", "sum_assured": 4000000, "premium": 16000, "tenure_years": 1 },
+      "financial": { "declared_annual_income": 900000, "source_of_funds": "freelance_income" },
+      "nominee": { "name": "Meera Nair", "relationship": "mother" },
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 162, "weight_kg": 56, "bmi": 21.3, "conditions": [], "tobacco": false, "alcohol": false, "drugs": false, "past_medical_history": "none", "ongoing_medication": "none", "family_history": [] }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true },
+      { "type": "aadhaar_ekyc", "framework": "Aadhaar_Act", "granted": true },
+      { "type": "account_aggregator", "framework": "RBI_AA", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9847011223", "provider": "Vi", "vintage_months": 60, "ported_recently": false, "on_revocation_list": false, "holder_name": "Anjali Nair" },
+      "pan_verify": { "status": "available", "pan": "AXNPN5678Q", "pan_status": "valid", "name": "Anjali Nair", "dob": "1994-11-02", "aadhaar_seeded": true, "address": "44 Residency Road, Fort Kochi, Ernakulam, 682001" },
+      "aadhaar_ekyc": { "status": "available", "name": "Anjali Nair", "dob": "1994-11-02", "address": "44 Residency Road, Fort Kochi, Ernakulam, 682001", "photo": true },
+      "ckyc": { "status": "available", "existing_record": true, "name": "Anjali Nair", "dob": "1994-11-02", "address": "44 Residency Road, Fort Kochi, Ernakulam, 682001" },
+      "liveness_facematch": { "status": "available", "liveness_pass": true, "liveness_score": 0.93, "face_match_score": 0.96, "deepfake_flag": false },
+      "epfo": { "status": "not_applicable" },
+      "itr": { "status": "unavailable" },
+      "account_aggregator": { "status": "available", "name": "Anjali Nair", "imputed_annual_income": 900000, "income_source": "AA_fallback_only", "avg_monthly_balance": 60000, "expense_to_income": 0.5 },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "682001", "morbidity_index": 0.25, "fraud_hotspot_flag": false },
+      "velocity_graph": { "status": "available", "velocity_score": 0.1, "shared_device_count": 0, "cross_product_count_45d": 0 },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false, "lists_checked": ["UN", "OFAC", "RBI_caution"] },
+      "abha_health_records": { "status": "consent_declined" },
+      "pharmacy": { "status": "not_requested" },
+      "ml_scores": { "fraud_score": 0.18, "anomaly_score": 0.22, "graph_score": 0.08 }
+    },
+    "documents": [],
+    "follow_up_observations": {
+      "_note": "Dev-mode MOCK vendor response for request_additional_document(bank_statement) (§7.1: mock the response, never the step). The one gather cycle returns this; re-judge sees corroborated income -> benign -> ISSUE.",
+      "bank_statement": {
+        "status": "available",
+        "verified_annual_income": 900000,
+        "salary_credit_monthly": 75000,
+        "avg_monthly_balance": 60000,
+        "corroborates_declared_income": true
+      }
+    }
+  },
+  "expected": {
+    "decision": "REFER",
+    "decision_with_llm": "STEP_UP",
+    "decision_with_llm_after_gather": "ISSUE",
+    "expected_outcome": "GREY-ZONE",
+    "expected_bre_outcome": "GREY-ZONE",
+    "expected_flag_types": ["thin_file"],
+    "expected_rulings": [
+      { "flag_type": "thin_file", "related_rule": "R-008", "ruling": "needs_income_corroboration", "must_cite": true }
+    ]
+  }
+}

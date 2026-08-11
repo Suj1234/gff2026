@@ -1,0 +1,11 @@
+dspy==3.3.0
+pytest
+pip-system-certs  # makes Python trust the corporate TLS-proxy CA (else tiktoken/model-cost fetches fail on-network)
+fastapi           # Phase 4: POST /underwrite endpoint (api.py)
+uvicorn           # Phase 4: ASGI server to run api:app
+httpx             # Phase 4: fastapi TestClient dependency (endpoint tests)
+requests          # bank_statement.py: iAdore bank-statement analysis API calls
+sqlmodel          # Phase C: journey/ DB layer (SQLite now, Postgres via DATABASE_URL); pulls SQLAlchemy
+itsdangerous      # Phase C: signs the httpOnly server-session cookie (journey auth)
+python-multipart  # Phase C: FastAPI form / file-upload parsing (bank statement upload)
+jinja2            # Phase C: server-rendered journey templates

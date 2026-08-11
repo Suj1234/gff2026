@@ -1,0 +1,74 @@
+{
+  "_note": "Vikram: velocity/cover-stacking (>=K cross-product apps in 45d with a recent health signal, R-012) PLUS undisclosed cardiac disease (ABHA ICD I25 + a declined 'no heart_disease' health form, R-010). Two high-severity soft flags -> cluster (R-015) fires. Phase 1 (no LLM): GREY-ZONE -> REFER. This is the plan's canonical REFER case.",
+  "input": {
+    "proposal_id": "PRP-2026-000501",
+    "meta": { "channel": "whatsapp", "insurer": "Secure Insure", "persona": "self_employed" },
+    "application": {
+      "applicant": {
+        "name": "Vikram Mehta",
+        "dob": "1972-08-19",
+        "gender": "male",
+        "age": 52,
+        "marital_status": "married",
+        "address": "9 Civil Lines, New Delhi, 110054",
+        "pincode": "110054"
+      },
+      "occupation": { "declared_type": "self_employed", "declared_occupation": "trader" },
+      "product": { "type": "individual_health", "sum_assured": 2500000, "premium": 22000, "tenure_years": 1 },
+      "financial": { "declared_annual_income": 1800000, "source_of_funds": "business_income" },
+      "nominee": { "name": "Sunita Mehta", "relationship": "spouse" },
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 172, "weight_kg": 74, "bmi": 25.0, "conditions": [], "tobacco": false, "alcohol": false, "drugs": false, "past_medical_history": "none", "ongoing_medication": "none", "family_history": [] }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true },
+      { "type": "aadhaar_ekyc", "framework": "Aadhaar_Act", "granted": true },
+      { "type": "abha_hie_cm", "framework": "ABDM_HIE_CM", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9811022334", "provider": "Airtel", "vintage_months": 120, "ported_recently": false, "on_revocation_list": false, "holder_name": "Vikram Mehta" },
+      "pan_verify": { "status": "available", "pan": "AAKPM4321J", "pan_status": "valid", "name": "Vikram Mehta", "dob": "1972-08-19", "aadhaar_seeded": true, "address": "9 Civil Lines, New Delhi, 110054" },
+      "aadhaar_ekyc": { "status": "available", "name": "Vikram Mehta", "dob": "1972-08-19", "address": "9 Civil Lines, New Delhi, 110054", "photo": true },
+      "ckyc": { "status": "available", "existing_record": true, "name": "Vikram Mehta", "dob": "1972-08-19", "address": "9 Civil Lines, New Delhi, 110054" },
+      "liveness_facematch": { "status": "available", "liveness_pass": true, "liveness_score": 0.9, "face_match_score": 0.97, "deepfake_flag": false },
+      "gst": { "status": "available", "gstin": "07***********Z", "entity": "Mehta Trading Co", "registration_date": "2015-04-01", "turnover_slab": "40L-1.5Cr", "firm_type": "proprietorship" },
+      "itr": { "status": "available", "name": "Vikram Mehta", "latest_total_taxable_income": 1800000 },
+      "account_aggregator": { "status": "available", "name": "Vikram Mehta", "imputed_annual_income": 1750000, "income_source": "gst_itr", "avg_monthly_balance": 200000, "expense_to_income": 0.4 },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "110054", "morbidity_index": 0.3, "fraud_hotspot_flag": false },
+      "velocity_graph": {
+        "status": "available",
+        "velocity_score": 0.72,
+        "shared_device_count": 2,
+        "shared_bank_count": 1,
+        "cross_product_count_45d": 4,
+        "days_since_last_health_signal": 9,
+        "related_proposals": [
+          { "insurer": "other", "days_ago": 9, "sum_insured_band": "near_identical", "product": "health", "status": "declined" }
+        ]
+      },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false, "lists_checked": ["UN", "OFAC", "RBI_caution"] },
+      "abha_health_records": {
+        "status": "available",
+        "diagnoses": ["I25.10"],
+        "icd_codes": ["I25.10"],
+        "prescriptions": ["atorvastatin"],
+        "unstructured_notes": ["coronary artery disease; cardiac procedure ~6 weeks before application"]
+      },
+      "pharmacy": { "status": "not_requested" },
+      "ml_scores": { "fraud_score": 0.55, "anomaly_score": 0.6, "graph_score": 0.68 }
+    },
+    "documents": [],
+    "follow_up_observations": {}
+  },
+  "expected": {
+    "decision": "REFER",
+    "expected_outcome": "GREY-ZONE",
+    "expected_bre_outcome": "GREY-ZONE",
+    "expected_flag_types": ["velocity_anomaly", "non_disclosure_signal"],
+    "expected_rulings": [
+      { "flag_type": "velocity_anomaly", "related_rule": "R-012" },
+      { "flag_type": "non_disclosure_signal", "related_rule": "R-010" }
+    ]
+  }
+}

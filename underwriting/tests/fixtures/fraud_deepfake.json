@@ -1,0 +1,50 @@
+{
+  "_note": "Failed liveness / deepfake detected during onboarding. R-003 identity-fraud hard gate -> HARD_DECLINE. This is the ONLY path to DECLINE (decision row 1). Short-circuits before any soft rule or the LLM.",
+  "input": {
+    "proposal_id": "FRAUD-DEEPFAKE-001",
+    "meta": { "channel": "whatsapp", "insurer": "Secure Insure", "persona": "salaried" },
+    "application": {
+      "applicant": {
+        "name": "Imposter Applicant",
+        "dob": "1988-01-10",
+        "gender": "male",
+        "age": 36,
+        "marital_status": "single",
+        "address": "unknown",
+        "pincode": "110001"
+      },
+      "occupation": { "declared_type": "salaried", "declared_occupation": "consultant" },
+      "product": { "type": "individual_health", "sum_assured": 3000000, "premium": 15000, "tenure_years": 1 },
+      "financial": { "declared_annual_income": 1500000 },
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 178, "weight_kg": 75, "bmi": 23.7, "conditions": [], "tobacco": false }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true },
+      { "type": "aadhaar_ekyc", "framework": "Aadhaar_Act", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9000000000", "provider": "Jio", "vintage_months": 2, "ported_recently": true, "on_revocation_list": false, "holder_name": "Imposter Applicant" },
+      "pan_verify": { "status": "available", "pan": "ZZZPX9999Z", "pan_status": "valid", "name": "Imposter Applicant", "dob": "1988-01-10", "aadhaar_seeded": true, "address": "unknown" },
+      "aadhaar_ekyc": { "status": "available", "name": "Imposter Applicant", "dob": "1988-01-10", "address": "unknown", "photo": true },
+      "ckyc": { "status": "unavailable" },
+      "liveness_facematch": { "status": "available", "liveness_pass": false, "liveness_score": 0.31, "face_match_score": 0.42, "deepfake_flag": true },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "110001", "fraud_hotspot_flag": true },
+      "velocity_graph": { "status": "available", "velocity_score": 0.9, "shared_device_count": 5, "cross_product_count_45d": 6 },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false },
+      "abha_health_records": { "status": "not_requested" },
+      "pharmacy": { "status": "not_requested" },
+      "ml_scores": { "fraud_score": 0.95, "anomaly_score": 0.9, "graph_score": 0.88 }
+    },
+    "documents": [],
+    "follow_up_observations": {}
+  },
+  "expected": {
+    "decision": "DECLINE",
+    "expected_outcome": "DECLINE",
+    "expected_bre_outcome": "DECLINE",
+    "expected_hard_gate": "R-003",
+    "expected_rulings": []
+  }
+}

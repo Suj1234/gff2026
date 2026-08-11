@@ -1,0 +1,54 @@
+{
+  "_note": "Overweight, otherwise clean → ISSUE_WITH_LOADING (Core-6 outcome #2). Age 40 (below the 46-55 senior-medicals band so R-005b does NOT step-up), BMI 28.4 = 'overweight' band × age 36-45 = +10% loading from the actuarial matrix (config.BMI_AGE_LOADING). Every hard gate passes, income covers SI, identity consistent, no litigation, ABHA consent declined, ML clean, email clean → zero soft flags → BRE LOADING → ISSUE_WITH_LOADING. Data + test only; no engine change (JOURNEY_PLAN §6.7).",
+  "input": {
+    "proposal_id": "MEENA-LOADING-001",
+    "meta": { "channel": "whatsapp", "insurer": "Secure Insure", "persona": "salaried" },
+    "application": {
+      "applicant": {
+        "name": "Meena Raghavan",
+        "dob": "1985-06-11",
+        "gender": "female",
+        "age": 40,
+        "marital_status": "married",
+        "address": "22 Residency Road, Ashok Nagar, Bengaluru, 560025",
+        "pincode": "560025"
+      },
+      "occupation": { "declared_type": "salaried", "declared_occupation": "operations_manager", "employer_declared": "Wipro Limited" },
+      "product": { "type": "individual_health", "sum_assured": 2500000, "premium": 16000, "tenure_years": 1, "payment_mode": "annual" },
+      "financial": { "declared_annual_income": 1600000, "source_of_funds": "salary" },
+      "nominee": { "name": "Arjun Raghavan", "relationship": "spouse" },
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 162, "weight_kg": 74.5, "bmi": 28.4, "conditions": [], "tobacco": false, "alcohol": false, "drugs": false, "past_medical_history": "none", "ongoing_medication": "none", "family_history": [] }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true },
+      { "type": "aadhaar_ekyc", "framework": "Aadhaar_Act", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9845567890", "provider": "Airtel", "vintage_months": 84, "ported_recently": false, "on_revocation_list": false, "holder_name": "Meena Raghavan" },
+      "pan_verify": { "status": "available", "pan": "AXTPR7788M", "pan_status": "valid", "name": "Meena Raghavan", "dob": "1985-06-11", "aadhaar_seeded": true, "address": "22 Residency Road, Ashok Nagar, Bengaluru, 560025" },
+      "aadhaar_ekyc": { "status": "available", "name": "Meena Raghavan", "dob": "1985-06-11", "address": "22 Residency Road, Ashok Nagar, Bengaluru, 560025", "photo": true },
+      "ckyc": { "status": "available", "existing_record": true, "name": "Meena Raghavan", "dob": "1985-06-11", "address": "22 Residency Road, Ashok Nagar, Bengaluru, 560025" },
+      "liveness_facematch": { "status": "available", "liveness_pass": true, "liveness_score": 0.93, "face_match_score": 0.96, "deepfake_flag": false },
+      "epfo": { "status": "available", "name": "Meena Raghavan", "employer": "Wipro Limited", "date_of_joining": "2014-04", "tenure_years": 11, "contribution_band": "14-16L", "epf_deducted_last_45d": true },
+      "itr": { "status": "available", "name": "Meena Raghavan", "latest_total_taxable_income": 1600000 },
+      "account_aggregator": { "status": "available", "name": "Meena Raghavan", "imputed_annual_income": 1590000, "income_source": "gst_itr", "avg_monthly_balance": 210000, "expense_to_income": 0.4 },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "560025", "morbidity_index": 0.25, "fraud_hotspot_flag": false },
+      "velocity_graph": { "status": "available", "velocity_score": 0.06, "shared_device_count": 0, "cross_product_count_45d": 0 },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false, "lists_checked": ["UN", "OFAC", "RBI_caution"] },
+      "email_intel": { "status": "available", "email": "meena.r@gmail.com", "is_disposable": false, "is_spam": false, "name_match": true, "fraud_risk_score": 0.1 },
+      "abha_health_records": { "status": "consent_declined" },
+      "pharmacy": { "status": "not_requested" },
+      "ml_scores": { "fraud_score": 0.09, "anomaly_score": 0.1, "graph_score": 0.05 }
+    },
+    "documents": [],
+    "follow_up_observations": {}
+  },
+  "expected": {
+    "decision": "ISSUE_WITH_LOADING",
+    "expected_outcome": "LOADING",
+    "expected_bre_outcome": "LOADING",
+    "expected_rulings": []
+  }
+}
