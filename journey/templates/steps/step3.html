@@ -1,0 +1,51 @@
+<section class="card">
+  <h1>Financial</h1>
+  <p style="color:var(--text-2);margin-bottom:var(--sp-5)">
+    Declared income is validated against the sum insured (income-multiple, R-007/R-008) and,
+    if uploaded, the bank statement corroborates it.
+  </p>
+
+  {% set fin = app.bundle.get("application", {}).get("financial", {}) %}
+  {% set aa = signals.account_aggregator %}
+
+  <div class="grid2">
+    <div class="field"><label>Declared annual income (₹)</label>
+      <input class="input mono" id="f-income" inputmode="numeric" value="{{ fin.declared_annual_income or '' }}"></div>
+    <div class="field"><label>Source of funds</label>
+      <select class="input" id="f-source">
+        {% for s in ['Salary','Business income','Professional fees','Rental','Investments','Other'] %}
+          <option {{ 'selected' if fin.source_of_funds == s else '' }}>{{ s }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="field"><label>Purpose of cover</label>
+      <select class="input" id="f-purpose">
+        {% for p in ['Self & family health cover','Top-up','Corporate buy-up','Other'] %}
+          <option {{ 'selected' if fin.purpose_of_cover == p else '' }}>{{ p }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="field"><label>GST turnover slab (from Step 1, read-only)</label>
+      <input class="input" value="{{ signals.gst.turnover_slab if signals.gst else '—' }}" disabled></div>
+  </div>
+  <button class="btn btn-secondary" id="save-financial" style="margin-top:var(--sp-3)">Save income</button>
+  <span class="msg" id="financial-msg"></span>
+
+  <h2 style="font-size:var(--fs-h2);margin:var(--sp-6) 0 var(--sp-3)">Bank statement (iAdore)</h2>
+  {% if aa and aa.status == "available" and aa.imputed_annual_income %}
+    <div class="kv" style="background:var(--ok-tint);border-color:var(--ok)">
+      <span class="k">Statement analysed</span>
+      <span class="v">Imputed income ₹{{ "{:,}".format(aa.imputed_annual_income) }}
+        · Avg balance ₹{{ "{:,}".format(aa.avg_monthly_balance|int) if aa.avg_monthly_balance else "—" }}</span>
+    </div>
+  {% else %}
+    <p style="color:var(--text-2);margin-bottom:var(--sp-3)">
+      Upload a PDF bank statement — iAdore analyses it for imputed income, average balance and salary credits.
+      A document-sharing consent is recorded on upload (this is a direct statement upload, not an Account Aggregator pull).
+    </p>
+    <input type="file" id="stmt-file" accept="application/pdf">
+    <button class="btn btn-primary" id="upload-stmt" style="margin-left:var(--sp-2)">Upload &amp; analyse</button>
+    <span class="msg" id="stmt-msg"></span>
+  {% endif %}
+
+  <input type="hidden" id="app-id" value="{{ app.id }}">
+</section>
+<script src="/journey/static/step3.js"></script>

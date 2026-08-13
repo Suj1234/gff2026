@@ -155,7 +155,7 @@ Sub-steps: **Income · Source · Bank statement**
 | Declared annual income | `[USER]` | — | `financial.declared_annual_income` |
 | Source of funds · Purpose of cover | `[USER]` | — | `financial.source_of_funds` · `financial.purpose_of_cover` |
 | GST turnover slab (cross-check, read-only) | `[FETCH]` | from Step-1 GST | `gst.turnover_slab` |
-| Bank statement upload (+ inline AA consent) | `[USER]` upload → `[FETCH]` | iAdore ✅ | `signals.account_aggregator.*` |
+| Bank statement upload (+ doc-sharing consent) | `[USER]` upload → `[FETCH]` | iAdore ✅ | `signals.account_aggregator.*` |
 
 Bank statement REPLACES Account Aggregator: PDF upload → iAdore submit→poll→report →
 imputed income, avg balance, salary credits. Also becomes the STEP_UP income-corroboration

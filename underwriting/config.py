@@ -15,37 +15,48 @@ placeholders, and only the vendor raw payload (behind an adapter) is mocked.
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# STP eligibility & age / sum-insured ceilings  (R-005, R-006)
+# STP eligibility & age / sum-assured ceilings  (R-005, R-006)  — LIFE values
 # ---------------------------------------------------------------------------
-# Auto-issue age band; ages above it (up to STP_MANUAL_AGE_MAX) allow issue but
-# require medicals/step-up; outside the manual-review band → REFER to human UW.
+# Auto-issue age band; ages above it (up to STP_AGE_MAX) allow issue but require
+# medicals/step-up; outside the manual-review band → REFER to human UW.
+# LIFE re-parameterization: term life is written to ~65-70; STP_AGE_MAX raised
+# from the health value (55) to 65 so a 60-year-old term applicant reaches the
+# reasoning path instead of an instant R-005 hard-refer. AUTO_ISSUE_AGE_MAX stays
+# 45 — older clean lives are still allowed but require medicals (R-005b / grid).
 AUTO_ISSUE_AGE_MIN = 18   # TODO(underwriting-manual)
 AUTO_ISSUE_AGE_MAX = 45   # TODO(underwriting-manual)
 STP_AGE_MIN = 18          # TODO(underwriting-manual): below → manual UW (minor)
-STP_AGE_MAX = 55          # TODO(underwriting-manual): above → manual UW (senior)
+STP_AGE_MAX = 65          # TODO(underwriting-manual): LIFE — above → manual UW (senior)
 
-# Non-medical (no full medicals) sum-insured limits, by age.
+# Non-medical (no full medicals) sum-assured limits, by age. (R-M1's age×SA grid
+# supersedes this binary in Phase 2; kept for the current medical-trigger logic.)
 NON_MEDICAL_SI_LIMIT_YOUNG = 5_000_000   # age <= 45   # TODO(underwriting-manual)
 NON_MEDICAL_SI_LIMIT_SENIOR = 2_500_000  # age 46-55   # TODO(underwriting-manual)
 
-# Max sum-insured that can be auto-issued at all; above → REFER (manual UW).
-STP_SI_CEILING = 10_000_000  # ₹1 crore   # TODO(underwriting-manual)
+# Max sum-assured that can be auto-issued at all; above → REFER (manual UW).
+# LIFE: raised from the health ₹1cr to ₹2.5cr — life SA runs far higher, and a
+# large-SA case should reach financial/moral-hazard reasoning, not instant-refer.
+STP_SI_CEILING = 25_000_000  # ₹2.5 crore  # TODO(underwriting-manual): LIFE
 
 # ---------------------------------------------------------------------------
-# Income → sum-insured multiple  (R-007)
+# Income → sum-assured multiple  (R-007)  — LIFE taper
 # ---------------------------------------------------------------------------
-# Max SI as a multiple of verified annual income, by age band. Requested SI
-# above the band's multiple raises `income_thin_file` (soft flag → step-up).
+# Max SA as a multiple of verified annual income, by age band. Requested SA above
+# the band's multiple raises `income_thin_file` (soft flag → step-up).
+# LIFE re-parameterization (convergent Indian practice: young lives 25-35×,
+# tapering hard at older ages; the health floor of 15× at 56+ was too generous —
+# life over-insurance vs HLV is a moral-hazard signal, so the tail drops to 5×).
 INCOME_SI_MULTIPLE_BY_AGE = [
     # (age_max_inclusive, multiple)
-    (35, 30),   # TODO(underwriting-manual)
-    (45, 25),   # TODO(underwriting-manual)
-    (55, 20),   # TODO(underwriting-manual)
-    (200, 15),  # 56+  # TODO(underwriting-manual)
+    (35, 30),   # TODO(underwriting-manual)  ≤35 → 25-35× (use 30×)
+    (45, 25),   # TODO(underwriting-manual)  36-45 → 20-25×
+    (50, 15),   # TODO(underwriting-manual)  46-50 → 15×
+    (60, 10),   # TODO(underwriting-manual)  51-60 → 10×
+    (200, 5),   # TODO(underwriting-manual)  60+  → 5×  (life HLV floor)
 ]
-# When income cannot be proven (AA fallback / no proof), SI ceiling below which
+# When income cannot be proven (AA fallback / no proof), SA ceiling below which
 # no income evidence is demanded.
-NO_INCOME_PROOF_SI_CEILING = 750_000  # TODO(underwriting-manual)
+NO_INCOME_PROOF_SI_CEILING = 1_000_000  # TODO(underwriting-manual): LIFE ₹10L
 
 # ---------------------------------------------------------------------------
 # BMI × age premium-loading matrix  (R-009)  — % loading
@@ -112,6 +123,40 @@ VELOCITY_CROSS_PRODUCT_MIN = 3          # K: cross-product apps in 45d  # TODO(u
 VELOCITY_LAST_HEALTH_SIGNAL_DAYS = 30   # recent health signal window   # TODO(underwriting-manual)
 
 # ---------------------------------------------------------------------------
+# LIFE financial underwriting  (R-F2 HLV ceiling, R-F3 PAN-aggregate)
+# ---------------------------------------------------------------------------
+# R-F2: max SA = min(income × age-multiple, HLV). The income multiple reuses
+# INCOME_SI_MULTIPLE_BY_AGE (above); HLV, when provided, is a hard second ceiling.
+# Requested SA above EITHER ceiling raises `over_insurance` (moral-hazard proxy).
+#
+# R-F3: aggregate in-force life cover (PAN-linked) must not exceed the same
+# income×age-multiple cap — cover-stacking across insurers is the over-insurance
+# signal life cares about. A tolerance avoids flagging trivial rounding overages.
+PAN_AGGREGATE_TOLERANCE = 1.10  # allow aggregate up to 110% of the cap  # TODO(underwriting-manual)
+
+# ---------------------------------------------------------------------------
+# LIFE medical evidence grid  (R-M1)  — age × sum-assured → evidence required
+# ---------------------------------------------------------------------------
+# Decides WHAT medical evidence a case needs (never the price). Replaces the
+# binary NON_MEDICAL_SI_LIMIT_* with a 2-D grid. Evidence tiers, increasing:
+#   "none"      DGH only
+#   "tele_mer"  tele/video medical interview
+#   "full_mer"  physical exam + standard labs
+#   "full_labs" full exam + ECG/TMT + extended labs
+# A case needing tele_mer+ beyond what's on file → step-up (R-M1 beyond_matrix).
+# Grid keyed by (age_max_inclusive, [(sa_max_inclusive, tier), ...]); first match wins.
+MEDICAL_GRID_BY_AGE_SA = [
+    # age ≤ 35
+    (35, [(5_000_000, "none"), (10_000_000, "tele_mer"), (float("inf"), "full_mer")]),
+    # age 36-45
+    (45, [(5_000_000, "tele_mer"), (10_000_000, "full_mer"), (float("inf"), "full_labs")]),
+    # age 46-55
+    (55, [(2_500_000, "tele_mer"), (float("inf"), "full_labs")]),
+    # age 56+
+    (200, [(float("inf"), "full_labs")]),
+]  # TODO(underwriting-manual): tiers + cutoffs per the life underwriting manual
+
+# ---------------------------------------------------------------------------
 # Litigation / FIR  (R-018)  — moral-hazard soft flag → grey-zone
 # ---------------------------------------------------------------------------
 # Any of these on record raises `adverse_litigation` (grey-zone → human UW): a
@@ -141,6 +186,10 @@ CLUSTER_FLAG_TYPES = frozenset({
     "velocity_anomaly",
     "non_disclosure_signal",
     "adverse_litigation",
+    # LIFE moral-hazard flags:
+    "over_insurance",             # R-F2/R-F3: SA above HLV/income-multiple or PAN-aggregate
+    "cover_stacking",             # R-F3: aggregate in-force cover breaches the cap
+    "cross_signal_moral_hazard",  # R-M2 (Phase 3): the combination signal
 })
 
 # ---------------------------------------------------------------------------
@@ -190,7 +239,15 @@ CONDITION_TO_ICD = {
     "hypothyroidism": ["E03", "E00", "E01", "E02"],
     "dyslipidemia": ["E78"],
     "anaemia": ["D50", "D51", "D52", "D53", "D64"],
-}  # TODO(underwriting-manual): confirm full 30-condition crosswalk
+    # LIFE mortality-relevant conditions (the §45 non-disclosure drivers):
+    "cancer": ["C" + f"{n:02d}" for n in range(0, 97)],  # C00–C96 malignant neoplasms
+    "hepatitis": ["B15", "B16", "B17", "B18", "B19", "K70", "K71", "K72", "K73", "K74"],
+    "mental_illness": ["F20", "F21", "F22", "F23", "F25", "F30", "F31", "F32", "F33"],
+    "hiv": ["B20", "B21", "B22", "B23", "B24", "Z21"],
+    "respiratory_disease": ["J40", "J41", "J42", "J43", "J44", "J45", "J46", "J47"],  # COPD/asthma
+    "kidney_disease": ["N17", "N18", "N19"],  # acute + chronic kidney disease
+    "stroke": ["I60", "I61", "I62", "I63", "I64", "G45"],
+}  # TODO(underwriting-manual): confirm full condition crosswalk
 
 # Drug (generic) → the condition it implies. Prescription evidence of the drug
 # is treated as evidence of the mapped condition (§4.2).
@@ -204,6 +261,20 @@ DRUG_TO_CONDITION = {
     "levothyroxine": "hypothyroidism",
     "thyroid_med": "hypothyroidism",
     "metformin": "diabetes",
+    "insulin": "diabetes",
+    # LIFE mortality-relevant drug markers:
+    "tenofovir": "hiv",
+    "efavirenz": "hiv",
+    "antiretroviral": "hiv",
+    "tamoxifen": "cancer",
+    "chemotherapy": "cancer",
+    "entecavir": "hepatitis",
+    "tenofovir_hbv": "hepatitis",
+    "salbutamol": "respiratory_disease",
+    "budesonide": "respiratory_disease",
+    "olanzapine": "mental_illness",
+    "clozapine": "mental_illness",
+    "lithium": "mental_illness",
 }  # TODO(underwriting-manual): confirm full drug list
 
 

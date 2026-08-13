@@ -37,14 +37,25 @@ def send_sms_otp(mobile: str, otp: str, *, timeout: int = 15) -> SendResult:
         "authkey": os.environ["MSG91_AUTH_KEY"],
         "Content-Type": "application/json",
     }
-    payload = {
-        "template_id": os.environ["MSG91_TEMPLATE_ID"],
-        "recipients": [{"mobiles": f"91{mobile}", "OTP": otp}],
-    }
+    # MSG91 Flow binds template variables by the variable NAME used in the DLT template
+    # (case-sensitive), as top-level keys in each recipient object. Templates vary
+    # (##OTP##, ##otp##, ##var##, ##var1##). We populate every common spelling so whichever
+    # the template actually uses gets the value — the SMS came through blank because only
+    # "OTP" was sent and the template used a different var name.
+    # Override via MSG91_OTP_VAR if you know the exact variable name.
+    var = os.getenv("MSG91_OTP_VAR")
+    recipient = {"mobiles": f"91{mobile}"}
+    if var:
+        recipient[var] = otp
+    else:
+        for k in ("OTP", "otp", "var", "var1", "VAR1"):
+            recipient[k] = otp
+    payload = {"template_id": os.environ["MSG91_TEMPLATE_ID"], "recipients": [recipient]}
     try:
         r = requests.post(url, json=payload, headers=headers, timeout=timeout)
-        ok = r.status_code == 200
+        # MSG91 returns 200 with {"type":"success"} on accept; a 200 with type!=success is a fail.
+        ok = r.status_code == 200 and '"type":"error"' not in r.text.replace(" ", "")
         return SendResult(sent=ok, http_status=r.status_code,
-                          error=None if ok else r.text[:200])
+                          error=None if ok else r.text[:300])
     except requests.RequestException as e:
         return SendResult(sent=False, error=str(e)[:200])

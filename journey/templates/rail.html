@@ -1,0 +1,27 @@
+{# rail.html — the live agent-signal rail (Phase D). Grouped 1:1 to the
+   Safety-Score source groups (DESIGN.md §5/§6). Populated + polled by rail.js;
+   this is the static shell + an initial server render of the header score. #}
+<aside class="rail" aria-label="What the agent sees">
+  <div class="rail__head">
+    <span class="micro">Agent read</span>
+    <div class="rail__score" id="rail-score">
+      <span class="rail__gauge">
+        <svg viewBox="0 0 76 76" aria-hidden="true">
+          <circle class="ring-bg" cx="38" cy="38" r="34"></circle>
+          <circle class="ring-fg" id="rail-ring" cx="38" cy="38" r="34"
+                  stroke="var(--n-3)" stroke-dasharray="213.6" stroke-dashoffset="213.6"></circle>
+        </svg>
+        <span class="num" id="rail-score-num">—</span>
+      </span>
+      <span class="rail__band">
+        <span class="lbl">Safety Score</span>
+        <span class="tag" id="rail-score-band">accumulating</span>
+      </span>
+    </div>
+  </div>
+  <div class="rail__groups" id="rail-groups" aria-live="polite">
+    <p class="micro" style="color:var(--text-3);padding:var(--sp-3)">Signals light up as each source returns.</p>
+  </div>
+  <input type="hidden" id="rail-app-id" value="{{ app.id }}" data-step="{{ active_step }}">
+</aside>
+<script src="/journey/static/rail.js"></script>

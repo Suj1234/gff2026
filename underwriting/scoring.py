@@ -284,6 +284,13 @@ def _flags_by_type(bre: BreResult) -> dict[str, list]:
     return out
 
 
+# Sentinel sub-score for a group whose source(s) never arrived. NOT 100 (which
+# means "assessed and clean") — an unassessed group is excluded from the composite
+# by safety_score, so this value is only a placeholder for the row/report.
+NOT_ASSESSED_SUB = 0.0
+_NOT_ASSESSED_WHY = "source unavailable — not assessed (NOT a clean result)"
+
+
 def _deduct(penalties: list[tuple[float, str]]) -> tuple[float, list[str]]:
     """Apply a list of (points, reason) penalties to a 100 base; clamp at 0."""
     score = 100.0
@@ -294,7 +301,29 @@ def _deduct(penalties: list[tuple[float, str]]) -> tuple[float, list[str]]:
     return max(0.0, round(score, 1)), whys
 
 
-def _s_identity(inp, bre, flags) -> tuple[float, list[str]]:
+def _result(
+    penalties: list[tuple[float, str]], assessed: bool, clean_text: str
+) -> tuple[float, list[str], bool]:
+    """Three-valued scorer return: (sub_score, whys, assessed).
+
+    - penalties present            → (deducted score, whys, True)   [assessed, flagged]
+    - no penalties, source present → (100.0, [clean_text], True)     [assessed, clean]
+    - no penalties, source ABSENT  → (NOT_ASSESSED_SUB, [why], False)[NOT assessed]
+
+    The absent case is the bug fix: previously it returned (100.0, clean_text) and
+    was scored as a clean 'Low' — asserting a state never observed (e.g. 'labs in
+    range' with zero labs). Now it is excluded from the composite (see safety_score).
+    """
+    if penalties:
+        sub, whys = _deduct(penalties)
+        return sub, whys, True
+    if assessed:
+        return 100.0, [clean_text], True
+    return NOT_ASSESSED_SUB, [_NOT_ASSESSED_WHY], False
+
+
+def _s_identity(inp, bre, flags) -> tuple[float, list[str], bool]:
+    sig = inp.signals
     p = []
     if "identity_mismatch" in flags:
         p.append((30, "name/DOB/address mismatch across sources"))
@@ -302,17 +331,22 @@ def _s_identity(inp, bre, flags) -> tuple[float, list[str]]:
         p.append((28, "CKYC field mismatch (name/DOB/address)"))
     if "mobile_pan_mismatch" in flags:
         p.append((5, "mobile holder-name mismatch"))
-    return _deduct(p) if p else (100.0, ["facematch/liveness ok, identity fields consistent"])
+    # Assessed if any identity source arrived (PAN / Aadhaar / liveness / CKYC).
+    assessed = any(s.available for s in (
+        sig.pan_verify, sig.aadhaar_ekyc, sig.liveness_facematch, sig.ckyc))
+    return _result(p, assessed, "facematch/liveness ok, identity fields consistent")
 
 
-def _s_contactability(inp, bre, flags) -> tuple[float, list[str]]:
+def _s_contactability(inp, bre, flags) -> tuple[float, list[str], bool]:
+    sig = inp.signals
     p = []
     if "mobile_pan_mismatch" in flags:
         p.append((10, "mobile holder-name mismatch"))
-    return _deduct(p) if p else (100.0, ["email/mobile clean"])
+    assessed = sig.mobile_intel.available or sig.email_intel.available
+    return _result(p, assessed, "email/mobile clean")
 
 
-def _s_occupation(inp, bre, flags) -> tuple[float, list[str]]:
+def _s_occupation(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
     p = []
     if sig.mca_director.available and sig.mca_director.director_default is True:
@@ -327,7 +361,10 @@ def _s_occupation(inp, bre, flags) -> tuple[float, list[str]]:
         cancelled = bool(ga and ga.context.get("cancelled"))
         p.append((20 if cancelled else 10,
                   "GST cancelled" if cancelled else "GST filing/transaction delay"))
-    return _deduct(p) if p else (100.0, ["EPF verified, non-hazardous"])
+    # Assessed if any employment/occupation source arrived (EPFO / MCA / GST / hazard).
+    assessed = any(s.available for s in (
+        sig.epfo, sig.mca_director, sig.gst, sig.occupation_hazard))
+    return _result(p, assessed, "EPF verified, non-hazardous")
 
 
 def _s_financial(inp, bre, flags) -> tuple[float, list[str]]:
@@ -352,18 +389,22 @@ def _s_financial(inp, bre, flags) -> tuple[float, list[str]]:
     an = risk_scores(inp, bre).anomaly_score
     if an and an >= C.ML_SCORE_HIGH_MIN:
         p.append((10, f"anomaly score {an} in high band"))
-    return _deduct(p) if p else (100.0, ["income corroborated, debt in range"])
+    # Assessed if we have any financial fact: a declared income, AA/ITR, or bureau.
+    assessed = bool(declared) or sig.account_aggregator.available \
+        or sig.itr.available or sig.credit_bureau.available
+    return _result(p, assessed, "income corroborated, debt in range")
 
 
 _LIFESTYLE_SEVERITY_PTS = {"high": 12, "moderate": 7, "low": 3}  # per indicator  # TODO(underwriting-manual)
 
 
-def _s_lifestyle(inp, bre, flags) -> tuple[float, list[str]]:
+def _s_lifestyle(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
     p = []
     # facial/CV smoking estimate is a FACT; declared tobacco is a declared FACT.
     fb = sig.facial_bmi_smoking
-    declared_tobacco = bool(inp.application.health_declaration.tobacco)
+    hd = inp.application.health_declaration
+    declared_tobacco = bool(hd.tobacco)
     if fb.available and fb.smoking_estimate in ("likely", "yes") and not declared_tobacco:
         # Undeclared smoking is both a lifestyle risk and a concealment signal.
         p.append((20, "smoking indicated (CV estimate) but not declared"))
@@ -380,10 +421,13 @@ def _s_lifestyle(inp, bre, flags) -> tuple[float, list[str]]:
             continue
         p.append((_LIFESTYLE_SEVERITY_PTS.get(sev, 7), f"{name} spend ({sev})"))
 
-    return _deduct(p) if p else (100.0, ["no adverse lifestyle indicators in facts"])
+    # Assessed if we have a health declaration (always present) OR a CV/AA source —
+    # the declaration itself is a lifestyle assessment (tobacco/alcohol answered).
+    assessed = hd is not None or fb.available or sig.account_aggregator.available
+    return _result(p, assessed, "no adverse lifestyle indicators in facts")
 
 
-def _s_medical(inp, bre, flags) -> tuple[float, list[str]]:
+def _s_medical(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
     p = []
     if "non_disclosure_signal" in flags:
@@ -407,10 +451,16 @@ def _s_medical(inp, bre, flags) -> tuple[float, list[str]]:
         p.append((min(3 * lows, 9), f"{lows} lab value(s) low vs reference range"))
     if bre.loading_pct and bre.loading_pct > 0:
         p.append((min(bre.loading_pct / 5, 10), f"BMI/age loading +{bre.loading_pct:g}%"))
-    return _deduct(p) if p else (100.0, ["labs in range, no undisclosed conditions"])
+    # Assessed if any medical evidence arrived: a pre-policy exam, ABHA, or pharmacy.
+    # The health DECLARATION alone is NOT proof labs were checked — but if the exam
+    # is absent, the "labs in range" clean text must not be asserted (the core bug).
+    assessed = ppm.available or sig.abha_health_records.available or sig.pharmacy.available
+    clean = ("no undisclosed conditions; labs in range" if ppm.available
+             else "no undisclosed conditions on available evidence")
+    return _result(p, assessed, clean)
 
 
-def _s_velocity(inp, bre, flags) -> tuple[float, list[str]]:
+def _s_velocity(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
     v = sig.velocity_graph
     p = []
@@ -422,10 +472,10 @@ def _s_velocity(inp, bre, flags) -> tuple[float, list[str]]:
     if gs >= C.ML_SCORE_CLEAN_MAX:
         p.append((min(round(10 + (gs - C.ML_SCORE_CLEAN_MAX) * 40, 1), 30),
                   f"graph/velocity score {gs} in moderate+ band"))
-    return _deduct(p) if p else (100.0, ["no cover-stacking pattern"])
+    return _result(p, v.available, "no cover-stacking pattern")
 
 
-def _s_geography(inp, bre, flags) -> tuple[float, list[str]]:
+def _s_geography(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
     g = sig.geography
     p = []
@@ -433,13 +483,14 @@ def _s_geography(inp, bre, flags) -> tuple[float, list[str]]:
         p.append((15, "pincode flagged fraud-hotspot (feeds score only, not a gate)"))
     if g.available and isinstance(g.morbidity_index, (int, float)) and g.morbidity_index > 0.5:
         p.append((10, f"elevated area morbidity index {g.morbidity_index}"))
-    return _deduct(p) if p else (100.0, ["pincode not a hotspot, morbidity in range"])
+    return _result(p, g.available, "pincode not a hotspot, morbidity in range")
 
 
-def _s_litigation(inp, bre, flags) -> tuple[float, list[str]]:
+def _s_litigation(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
     lit = (sig.model_extra or {}).get("litigation_fir")
     p = []
+    assessed = isinstance(lit, dict) and lit.get("status") == "available"
     if isinstance(lit, dict):
         crim = sum(1 for c in lit.get("cases", []) if c.get("civil_criminal") == "criminal")
         firs = lit.get("firs_registered", 0) or 0
@@ -447,10 +498,10 @@ def _s_litigation(inp, bre, flags) -> tuple[float, list[str]]:
             p.append((min(15 * crim, 30), f"{crim} criminal case(s)"))
         if firs:
             p.append((min(20 * firs, 40), f"{firs} FIR(s) registered"))
-    return _deduct(p) if p else (100.0, ["no adverse litigation on record"])
+    return _result(p, assessed, "no adverse litigation on record")
 
 
-def _s_fraud_check(inp, bre, flags) -> tuple[float, list[str]]:
+def _s_fraud_check(inp, bre, flags) -> tuple[float, list[str], bool]:
     """Reflects the fraud risk score + authenticity flags (not identity-fraud gate)."""
     rs = risk_scores(inp, bre)
     p = []
@@ -470,10 +521,14 @@ def _s_fraud_check(inp, bre, flags) -> tuple[float, list[str]]:
         if isinstance(efs, (int, float)) and efs >= C.ML_SCORE_CLEAN_MAX:
             p.append((min(round((efs - C.ML_SCORE_CLEAN_MAX) * 40 + 8, 1), 30),
                       f"email fraud score {efs} (vendor-inverted)"))
-    return _deduct(p) if p else (100.0, ["no tampering, low fraud score"])
+    # The fraud sub-score is always assessed: the heuristic fraud score is computed
+    # from BRE flags that always run, and email is a bonus signal. Only if the entire
+    # bundle carried nothing (no flags, no email) is it a bare "no signal" read — still
+    # a real assessment (the rules ran), so assessed=True.
+    return _result(p, True, "no tampering, low fraud score")
 
 
-def _s_insurance_portfolio(inp, bre, flags) -> tuple[float, list[str]]:
+def _s_insurance_portfolio(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
     iib = sig.iib
     p = []
@@ -481,7 +536,7 @@ def _s_insurance_portfolio(inp, bre, flags) -> tuple[float, list[str]]:
         p.append((10, f"{iib.num_policies} existing policies (portfolio concentration)"))
     if iib.available and iib.claim_match is True:
         p.append((10, "IIB prior-claim match"))
-    return _deduct(p) if p else (100.0, ["no adverse portfolio signal"])
+    return _result(p, iib.available, "no adverse portfolio signal")
 
 
 # group name → (weight source is config, scorer fn)
@@ -501,29 +556,49 @@ _SOURCE_SCORERS = {
 
 
 def safety_score(inp: ProposalInput, bre: BreResult) -> tuple[SafetyScore, list[ScoringBreakdownRow], dict]:
-    """Weighted composite 0-100 (higher = safer) + per-source breakdown (§5.2)."""
+    """Weighted composite 0-100 (higher = safer) + per-source breakdown (§5.2).
+
+    UNASSESSED groups (source never arrived) are EXCLUDED from the composite and the
+    weight is RENORMALIZED over the assessed groups — so an absent source no longer
+    drags a case toward a false 100/"Low", and the composite is a true weighted mean
+    of what was actually assessed. This also fixes the prior latent bug where the
+    weight sum was computed but never divided by: the score now divides by the
+    assessed weight, so it stays a proper 0-100 even if weights don't sum to 1.0.
+    """
     flags = set(_flags_by_type(bre).keys())
     rows: list[ScoringBreakdownRow] = []
-    total = 0.0
-    sum_w = 0.0
+    assessed_total = 0.0   # Σ weight×sub over ASSESSED groups only
+    assessed_w = 0.0       # Σ weight over ASSESSED groups only (the renorm divisor)
 
     # ponytail: risk_scores() is recomputed inside a few sub-scorers (financial/
     # velocity/fraud_check) instead of computed once here and passed down. Deterministic
     # so it's safe; hoist to a single call + inject if scoring ever shows up hot.
     for group, weight in C.SAFETY_SCORE_WEIGHTS.items():
         scorer = _SOURCE_SCORERS[group]
-        sub, whys = scorer(inp, bre, flags)
+        sub, whys, assessed = scorer(inp, bre, flags)
+        # `contribution` is the raw weight×sub for the row (reader-facing); the
+        # composite below renormalizes, so contributions no longer sum to the value
+        # when some groups are unassessed — the row carries `assessed` to explain why.
         contribution = round(weight * sub, 2)
-        total += contribution
-        sum_w += weight
+        if assessed:
+            assessed_total += weight * sub
+            assessed_w += weight
         rows.append(ScoringBreakdownRow(
             source_group=group, weight=weight, risk_sub_score=sub,
-            contribution=contribution, why="; ".join(whys),
+            contribution=contribution, why="; ".join(whys), assessed=assessed,
         ))
 
-    value = round(total, 1)
+    # Renormalize over assessed weight. If NOTHING was assessed (degenerate empty
+    # bundle), there is no basis for a score → value 0.0, band from that (High Risk),
+    # which is the safe direction (never a false clean).
+    value = round(assessed_total / assessed_w, 1) if assessed_w > 0 else 0.0
     ss = SafetyScore(value=value, band=C.safety_band(value))
-    scoring_total = {"sum_of_weights": round(sum_w, 4), "computed_safety_score": value}
+    scoring_total = {
+        "sum_of_weights": round(assessed_w, 4),        # assessed weight (the divisor)
+        "computed_safety_score": value,
+        "assessed_groups": sum(1 for r in rows if r.assessed),
+        "total_groups": len(rows),
+    }
     return ss, rows, scoring_total
 
 
@@ -551,12 +626,27 @@ def _demo() -> None:
     # upstream-driven → the note says it doesn't (§5.1/§11).
     if rs.score_source == "heuristic":
         assert abs(sum(rs.shap.values()) - rs.fraud_score) < 0.001
+    # Rohit's bundle has every group assessed, so the assessed weight is the full 1.0
+    # and the composite equals the old Σ(weight×sub) — the =65 anchor is unchanged by
+    # the absent-source fix (the fix only affects PARTIAL bundles).
     assert abs(tot["sum_of_weights"] - 1.0) < 1e-6, tot
+    assert tot["assessed_groups"] == tot["total_groups"], "Rohit's bundle is fully assessed"
     assert ss.band == "High Risk", (ss.value, ss.band)
     assert 60 <= ss.value <= 70, f"Rohit safety score {ss.value} not ~65"
-    # every contribution reconstructs the total (auditability)
+    # With all groups assessed and weights summing to 1.0, contributions reconstruct
+    # the total (auditability). (This exact identity holds only when fully assessed.)
     assert abs(sum(r.contribution for r in rows) - ss.value) < 0.5
-    print(f"Rohit safety_score={ss.value} band={ss.band} fraud={rs.fraud_score} OK")
+
+    # And PROVE the fix: an empty bundle must NOT score every group clean/Low.
+    empty = ProposalInput(**{"proposal_id": "empty-check",
+                             "application": {"applicant": {"name": "X", "age": 30},
+                                             "product": {"sum_assured": 5_000_000}}})
+    ess, erows, etot = safety_score(empty, run_bre(empty))
+    n_unassessed = etot["total_groups"] - etot["assessed_groups"]
+    assert n_unassessed > 0, "an empty bundle must have unassessed groups, not all-clean"
+    assert not all(r.assessed for r in erows), "absent sources must be marked unassessed"
+    print(f"Rohit safety_score={ss.value} band={ss.band} fraud={rs.fraud_score} OK; "
+          f"empty bundle: {n_unassessed}/{etot['total_groups']} groups NOT assessed (fix works)")
 
 
 if __name__ == "__main__":

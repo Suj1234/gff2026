@@ -32,6 +32,7 @@ from .schemas import Decision, Outcome, ProposalInput
 _ACTION_TO_SOURCE = {
     "request_additional_document(bank_statement)": "bank_statement",
     "request_abha_consent()": "abha_health_records",
+    "request_medical_exam(tele_mer)": "tele_mer",  # LIFE: tele-MER gather
     "request_identity_reverification()": "identity_reverification",
 }
 

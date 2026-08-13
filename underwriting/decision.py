@@ -38,9 +38,12 @@ class NextStep(BaseModel):
 
 # Map a Judge ruling → the real gather action (§7.1). The ACTION is real code
 # (Phase 3 wires the gateway calls); the vendor response is mocked in dev.
+# LIFE: the medical gather is a tele-MER (the life evidence channel); a health
+# deployment would map `needs_medical_check` to `request_abha_consent()` instead —
+# same ruling, deployment-specific action (no health fixture depends on the ABHA key).
 RULING_TO_ACTION = {
     "needs_income_corroboration": "request_additional_document(bank_statement)",
-    "needs_medical_check": "request_abha_consent()",
+    "needs_medical_check": "request_medical_exam(tele_mer)",
     "needs_identity_reverification": "request_identity_reverification()",
 }
 

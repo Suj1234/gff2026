@@ -1,0 +1,53 @@
+{
+  "_note": "LIFE senior needing medicals. Age 50 term case, SA 50L → R-M1 age×SA grid requires medical evidence not on file, and R-005b senior band → deterministic STEP_UP (beyond_standard_matrix), no LLM. Clean otherwise. Expected: STEP_UP, next_step request_medicals_or_underwriter_review.",
+  "input": {
+    "proposal_id": "LIFE-SENIOR-001",
+    "meta": { "channel": "agent_portal", "insurer": "Acme Life", "persona": "senior_term" },
+    "application": {
+      "applicant": {
+        "name": "Vinod Rao",
+        "dob": "1974-08-12",
+        "gender": "male",
+        "age": 50,
+        "marital_status": "married",
+        "address": "22 Lake View, Hyderabad, 500034",
+        "pincode": "500034"
+      },
+      "occupation": { "declared_type": "salaried", "declared_occupation": "finance_director", "employer_declared": "Acme Holdings Ltd" },
+      "product": { "type": "term_life", "plan_variant": "term", "sum_assured": 5000000, "premium": 38000, "tenure_years": 20, "premium_payment_term": 20, "payment_mode": "annual" },
+      "financial": { "declared_annual_income": 3000000, "source_of_funds": "salary", "human_life_value": 45000000, "dependents_count": 2 },
+      "nominee": { "name": "Anita Rao", "relationship": "spouse" },
+      "premium_payer": "self",
+      "backdating_requested": false,
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 170, "weight_kg": 72, "bmi": 24.9, "conditions": [], "tobacco": false, "alcohol": false, "drugs": false, "past_medical_history": "none", "ongoing_medication": "none", "family_history": [] }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9000112233", "provider": "Airtel", "vintage_months": 150, "ported_recently": false, "on_revocation_list": false, "holder_name": "Vinod Rao" },
+      "pan_verify": { "status": "available", "pan": "AVRPR6633N", "pan_status": "valid", "name": "Vinod Rao", "dob": "1974-08-12", "aadhaar_seeded": true, "address": "22 Lake View, Hyderabad, 500034" },
+      "aadhaar_ekyc": { "status": "available", "name": "Vinod Rao", "dob": "1974-08-12", "address": "22 Lake View, Hyderabad, 500034", "photo": true },
+      "ckyc": { "status": "available", "existing_record": true, "name": "Vinod Rao", "dob": "1974-08-12", "address": "22 Lake View, Hyderabad, 500034" },
+      "liveness_facematch": { "status": "available", "liveness_pass": true, "liveness_score": 0.93, "face_match_score": 0.97, "deepfake_flag": false },
+      "epfo": { "status": "available", "name": "Vinod Rao", "employer": "Acme Holdings Ltd", "tenure_years": 12, "contribution_band": "28-30L", "epf_deducted_last_45d": true },
+      "itr": { "status": "available", "name": "Vinod Rao", "latest_total_taxable_income": 3000000 },
+      "account_aggregator": { "status": "available", "name": "Vinod Rao", "imputed_annual_income": 2980000, "income_source": "gst_itr", "avg_monthly_balance": 500000, "expense_to_income": 0.3 },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "500034", "morbidity_index": 0.25, "fraud_hotspot_flag": false },
+      "velocity_graph": { "status": "available", "velocity_score": 0.05, "shared_device_count": 0, "cross_product_count_45d": 0 },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false, "lists_checked": ["UN", "OFAC", "RBI_caution"] },
+      "iib": { "status": "available", "num_policies": 1, "num_insurers": 1, "life_inforce_sa": 5000000, "total_inforce_sa": 5000000, "claim_match": false },
+      "ml_scores": { "fraud_score": 0.05, "anomaly_score": 0.06, "graph_score": 0.04 }
+    },
+    "documents": [],
+    "follow_up_observations": {}
+  },
+  "expected": {
+    "decision": "STEP_UP",
+    "expected_outcome": "GREY-ZONE",
+    "expected_bre_outcome": "GREY-ZONE",
+    "expected_rulings": []
+  }
+}

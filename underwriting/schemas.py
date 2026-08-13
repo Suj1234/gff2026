@@ -76,11 +76,14 @@ class Occupation(BaseModel):
 
 class Product(BaseModel):
     model_config = ConfigDict(extra="allow")
-    type: str = "individual_health"
+    type: str = "individual_health"  # LIFE demo uses "term_life"; inert unless a rule reads it
     sum_assured: int
     premium: Optional[int] = None
     tenure_years: Optional[int] = 1
     payment_mode: Optional[str] = None
+    # LIFE fields (optional; ride on the model, named so rules can read them):
+    plan_variant: Optional[str] = None          # term | whole_life | ulip
+    premium_payment_term: Optional[int] = None  # PPT can differ from tenure in life
 
 
 class FinancialDeclared(BaseModel):
@@ -88,6 +91,11 @@ class FinancialDeclared(BaseModel):
     declared_annual_income: Optional[int] = None
     purpose_of_cover: Optional[str] = None
     source_of_funds: Optional[str] = None
+    # LIFE financial-underwriting inputs (R-F2 HLV ceiling):
+    human_life_value: Optional[int] = None   # HLV if computed upstream
+    net_worth: Optional[int] = None
+    liabilities: Optional[int] = None
+    dependents_count: Optional[int] = None
 
 
 class HealthDeclaration(BaseModel):
@@ -121,10 +129,13 @@ class Application(BaseModel):
     occupation: Optional[Occupation] = None
     product: Product
     financial: Optional[FinancialDeclared] = None
-    nominee: Optional[dict] = None
+    nominee: Optional[dict] = None  # relationship read from here (insurable interest, R-M2)
     existing_cover_declared: list[dict] = Field(default_factory=list)
     declared_pep: Optional[bool] = None
     health_declaration: HealthDeclaration = Field(default_factory=HealthDeclaration)
+    # LIFE moral-hazard inputs (named so R-M2 can read them; optional):
+    premium_payer: Optional[str] = None       # "self" | "spouse" | "third_party" | name
+    backdating_requested: Optional[bool] = None
 
 
 # ===========================================================================
@@ -306,6 +317,24 @@ class Iib(_Src):
     num_policies: Optional[int] = None
     num_insurers: Optional[int] = None
     policies: list[dict] = Field(default_factory=list)
+    # LIFE cover-stacking (R-F3): aggregate in-force sum-assured across ALL policies
+    # (PAN-linked). The over-insurance / fronting signal that health didn't need.
+    # From the IIB fraud-framework feed (April-2026) or summed from `policies`.
+    total_inforce_sa: Optional[int] = None   # total in-force SA across all lines
+    life_inforce_sa: Optional[int] = None    # life-only in-force SA (the relevant one)
+
+
+class Aps(_Src):
+    """Attending Physician Statement — a treating doctor's free-text medical record,
+    requested with the applicant's signed release (LIFE staple; no standardized India
+    API — always RAW free-text). Mirrors AbhaHealthRecords.unstructured_notes: the LLM
+    extractor turns `notes` into conditions the R-010 crosswalk compares. `diagnoses`/
+    `icd_codes` carry any already-coded facts. Facts only — no verdict (§1.8)."""
+
+    notes: list[str] = Field(default_factory=list)        # free-text physician narrative (RAW)
+    diagnoses: list[str] = Field(default_factory=list)     # coded diagnoses if present
+    icd_codes: list[str] = Field(default_factory=list)
+    prescriptions: list[str] = Field(default_factory=list)
 
 
 class EmailIntel(_Src):
@@ -353,6 +382,7 @@ class Signals(BaseModel):
     facial_bmi_smoking: FacialBmiSmoking = Field(default_factory=FacialBmiSmoking)
     iib: Iib = Field(default_factory=Iib)
     email_intel: EmailIntel = Field(default_factory=EmailIntel)
+    aps: Aps = Field(default_factory=Aps)  # LIFE: attending physician statement (R-010 free-text)
 
 
 class ProposalInput(BaseModel):
@@ -467,9 +497,14 @@ class FlagRuling(BaseModel):
 class ScoringBreakdownRow(BaseModel):
     source_group: str
     weight: float
-    risk_sub_score: float  # 0-100, 100 = clean/safe
+    risk_sub_score: float  # 0-100, 100 = clean/safe (only meaningful when assessed)
     contribution: float
     why: str
+    # `assessed` distinguishes "source present and clean" (True, sub_score ~100)
+    # from "source absent — not assessed" (False). An unassessed group is EXCLUDED
+    # from the composite (safety_score renormalizes over assessed groups) so an
+    # absent source no longer scores as clean. Defaults True for backward-compat.
+    assessed: bool = True
 
 
 class SafetyScore(BaseModel):

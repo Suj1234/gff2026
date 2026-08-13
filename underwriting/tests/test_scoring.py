@@ -146,9 +146,17 @@ def test_breakdown_reconstructs_total(name):
     ss, rows, total = safety_score(inp, bre)
     # every source group in the config weight table appears exactly once
     assert {r.source_group for r in rows} == set(C.SAFETY_SCORE_WEIGHTS)
-    # Σ contribution == the reported safety score (within rounding)
-    assert abs(sum(r.contribution for r in rows) - ss.value) < 0.6
-    # weights match config; sub-scores are 0-100; each has a human 'why'
+    # The composite is a RENORMALIZED weighted mean over ASSESSED groups only
+    # (unassessed sources are excluded, not scored clean — the absent-source fix).
+    # Reconstruct it that way: Σ(weight×sub) / Σ(weight) over assessed rows.
+    aw = sum(r.weight for r in rows if r.assessed)
+    recon = (sum(r.weight * r.risk_sub_score for r in rows if r.assessed) / aw) if aw else 0.0
+    assert abs(recon - ss.value) < 0.6, (recon, ss.value)
+    # total block reports the assessed weight (the divisor) + assessed-group counts
+    assert abs(total["sum_of_weights"] - aw) < 1e-6
+    assert total["assessed_groups"] == sum(1 for r in rows if r.assessed)
+    # weights match config; sub-scores are 0-100; each has a human 'why'; the raw
+    # per-row contribution is still weight×sub (reader-facing, pre-renormalization).
     for r in rows:
         assert r.weight == C.SAFETY_SCORE_WEIGHTS[r.source_group]
         assert 0 <= r.risk_sub_score <= 100
@@ -242,8 +250,54 @@ def test_litigation_criminal_is_not_scored_clean():
     clean = _inp(None)
     _, rows_c, _ = safety_score(crim, run_bre(crim))
     _, rows_z, _ = safety_score(clean, run_bre(clean))
-    assert _row(rows_c, "litigation_fir").risk_sub_score < 100
-    assert _row(rows_z, "litigation_fir").risk_sub_score == 100  # absent → clean, as before
+    # Criminal litigation present → assessed and scored below clean.
+    crim_row = _row(rows_c, "litigation_fir")
+    assert crim_row.assessed and crim_row.risk_sub_score < 100
+    # Absent litigation source → NOT ASSESSED (was the bug: it read 100/clean, which
+    # asserted "no adverse litigation" on a source that was never checked). It is now
+    # excluded from the composite rather than counted as a clean 'Low'.
+    zero_row = _row(rows_z, "litigation_fir")
+    assert not zero_row.assessed, "absent litigation must be not-assessed, not clean-100"
+
+
+def test_absent_source_is_not_assessed_not_clean():
+    """PHASE-1 FIX PROOF (the core bug): a source that never arrived must be marked
+    NOT ASSESSED and EXCLUDED from the composite — it must NOT score 100/'Low'/clean
+    and its report section must NOT assert a checked-and-clean state.
+
+    Concretely: an applicant with NO medical evidence source (no pre-policy exam, no
+    ABHA, no pharmacy) must have the medical section read "Not Assessed", never "Low"
+    with 'labs in range' — which is the exact claims-liability the bug produced.
+    """
+    from underwriting.report import _sections, _level
+
+    # A bare bundle: declaration only, no medical/litigation/geo/portfolio sources.
+    inp = ProposalInput(**{
+        "proposal_id": "ABSENT-CHECK",
+        "application": {
+            "applicant": {"name": "No Evidence", "dob": "1990-01-01", "age": 34,
+                          "address": "1 Main St, City, 560001"},
+            "product": {"type": "term_life", "sum_assured": 5_000_000},
+            "declared_pep": False, "health_declaration": {"conditions": []}},
+    })
+    bre = run_bre(inp)
+    ss, rows, total = safety_score(inp, bre)
+
+    med = _row(rows, "medical")
+    assert not med.assessed, "medical with zero evidence must be NOT assessed"
+    assert "not assessed" in med.why.lower()
+    # It must NOT be counted toward the composite as a clean group.
+    assert total["assessed_groups"] < total["total_groups"]
+
+    # The report section for an unassessed group reads 'Not Assessed', never 'Low'.
+    sections = _sections(rows)
+    med_section = sections.get("medical_evaluation")
+    assert med_section is not None
+    assert med_section.risk_level == "Not Assessed", med_section.risk_level
+    assert getattr(med_section, "assessed") is False
+    # And the level helper itself never returns a clean label for an unassessed row.
+    assert _level(100.0, assessed=False) == "Not Assessed"
+    assert _level(100.0, assessed=True) == "Low"
 
 
 def test_gst_alert_penalizes_occupation_subscore():

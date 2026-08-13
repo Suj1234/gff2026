@@ -39,12 +39,20 @@ app.include_router(abha_router)
 try:
     from journey.db import init_db
     from journey.auth_routes import router as journey_auth_router
+    from journey.step_routes import callback_router as journey_callback_router
+    from journey.step_routes import router as journey_step_router
+    from journey.ui_routes import mount_static
+    from journey.ui_routes import router as journey_ui_router
 
     @app.on_event("startup")
     def _journey_startup() -> None:
         init_db()  # create_all — idempotent
 
     app.include_router(journey_auth_router)
+    app.include_router(journey_step_router)
+    app.include_router(journey_callback_router)
+    app.include_router(journey_ui_router)
+    mount_static(app)
 except ImportError:
     # journey/ deps not installed → the engine API still runs standalone.
     pass

@@ -1,0 +1,58 @@
+{
+  "_note": "LIFE over-insurance / cover-stacking. Requested SA 1.5cr exceeds HLV 1cr (R-F2 over_insurance), AND aggregate in-force life cover 3cr + 1.5cr = 4.5cr exceeds the 25x income cap 3.75cr+tolerance (R-F3 cover_stacking). Two moral-hazard flags → grey-zone → judge escalates → REFER.",
+  "input": {
+    "proposal_id": "LIFE-OVERINS-001",
+    "meta": { "channel": "agent_portal", "insurer": "Acme Life", "persona": "over_insured" },
+    "application": {
+      "applicant": {
+        "name": "Rakesh Nair",
+        "dob": "1981-02-20",
+        "gender": "male",
+        "age": 45,
+        "marital_status": "married",
+        "address": "8 Palm Grove, Kochi, 682016",
+        "pincode": "682016"
+      },
+      "occupation": { "declared_type": "self_employed", "declared_occupation": "trader", "employer_declared": "self" },
+      "product": { "type": "term_life", "plan_variant": "term", "sum_assured": 15000000, "premium": 42000, "tenure_years": 25, "premium_payment_term": 25, "payment_mode": "annual" },
+      "financial": { "declared_annual_income": 1500000, "source_of_funds": "business", "human_life_value": 10000000, "dependents_count": 3 },
+      "nominee": { "name": "Suma Nair", "relationship": "spouse" },
+      "premium_payer": "self",
+      "backdating_requested": false,
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 172, "weight_kg": 78, "bmi": 26.4, "conditions": [], "tobacco": false, "alcohol": true, "drugs": false, "past_medical_history": "none", "ongoing_medication": "none", "family_history": [] }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9847002211", "provider": "Airtel", "vintage_months": 120, "ported_recently": false, "on_revocation_list": false, "holder_name": "Rakesh Nair" },
+      "pan_verify": { "status": "available", "pan": "AKRPN2211M", "pan_status": "valid", "name": "Rakesh Nair", "dob": "1981-02-20", "aadhaar_seeded": true, "address": "8 Palm Grove, Kochi, 682016" },
+      "aadhaar_ekyc": { "status": "available", "name": "Rakesh Nair", "dob": "1981-02-20", "address": "8 Palm Grove, Kochi, 682016", "photo": true },
+      "ckyc": { "status": "available", "existing_record": true, "name": "Rakesh Nair", "dob": "1981-02-20", "address": "8 Palm Grove, Kochi, 682016" },
+      "liveness_facematch": { "status": "available", "liveness_pass": true, "liveness_score": 0.92, "face_match_score": 0.96, "deepfake_flag": false },
+      "itr": { "status": "available", "name": "Rakesh Nair", "latest_total_taxable_income": 1500000 },
+      "account_aggregator": { "status": "available", "name": "Rakesh Nair", "imputed_annual_income": 1500000, "income_source": "gst_itr", "avg_monthly_balance": 180000, "expense_to_income": 0.4 },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "682016", "morbidity_index": 0.3, "fraud_hotspot_flag": false },
+      "velocity_graph": { "status": "available", "velocity_score": 0.2, "shared_device_count": 0, "cross_product_count_45d": 1 },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false, "lists_checked": ["UN", "OFAC", "RBI_caution"] },
+      "iib": { "status": "available", "num_policies": 2, "num_insurers": 2, "life_inforce_sa": 30000000, "total_inforce_sa": 30000000, "claim_match": false, "policies": [{ "insurer": "LIC", "sa": 20000000, "type": "term" }, { "insurer": "HDFC Life", "sa": 10000000, "type": "term" }] },
+      "abha_health_records": { "status": "available", "diagnoses": [], "icd_codes": [], "prescriptions": [] },
+      "pre_policy_medical": { "status": "available", "exam": { "bmi": 26.4, "bp": "128/84" }, "lab": [{ "test": "fasting_glucose", "result": 95, "ref": "70-99" }] },
+      "ml_scores": { "fraud_score": 0.22, "anomaly_score": 0.18, "graph_score": 0.15 }
+    },
+    "documents": [],
+    "follow_up_observations": {}
+  },
+  "expected": {
+    "decision": "REFER",
+    "expected_outcome": "GREY-ZONE",
+    "expected_bre_outcome": "GREY-ZONE",
+    "expected_flag_types": ["over_insurance", "cover_stacking"],
+    "expected_rulings": [
+      { "flag_type": "over_insurance", "ruling": "unresolvable_escalate" },
+      { "flag_type": "cover_stacking", "ruling": "unresolvable_escalate" }
+    ]
+  }
+}

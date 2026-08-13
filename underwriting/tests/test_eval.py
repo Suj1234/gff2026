@@ -29,51 +29,33 @@ FIX = Path(__file__).parent / "fixtures"
 
 
 # ---------------------------------------------------------------------------
-# The GOOD offline judge — the same grounded, per-flag stub the pipeline tests use,
+# The GOOD offline judge — now the ONE shared helper (underwriting/tests/_fakejudge.py),
 # reproducing each fixture's expected terminal (rohit/vikram → REFER, anjali → 2-cycle
-# ISSUE). Kept local so this file is a self-contained regression driver.
+# ISSUE). Consolidated from the copy that used to live here (repo L-A1).
 # ---------------------------------------------------------------------------
-_RULING_BY_FLAG = {
-    "non_disclosure_signal": ("unresolvable_escalate", ["signals.abha_health_records.icd_codes"]),
-    "moderate_ml_score": ("unresolvable_escalate", ["signals.velocity_graph.velocity_score"]),
-    "ckyc_mismatch": ("unresolvable_escalate", ["signals.ckyc.address"]),
-    "velocity_anomaly": ("unresolvable_escalate", ["signals.velocity_graph.velocity_score"]),
-    "thin_file": ("needs_income_corroboration", ["signals.account_aggregator.imputed_annual_income"]),
-    "income_thin_file": ("needs_income_corroboration", ["signals.account_aggregator.imputed_annual_income"]),
-    "adverse_litigation": ("unresolvable_escalate", ["signals.litigation_fir.cases"]),
-    "gst_alert": ("unresolvable_escalate", ["signals.gst.activeAlerts"]),
-}
-
-
-def _good_judge():
-    calls = {"n": 0}
-
-    def fake(evidence_bundle, flags, follow_up_observations=None):
-        calls["n"] += 1
-        second = calls["n"] >= 2
-        out = []
-        for f in flags:
-            fid = f["flag_id"] if isinstance(f, dict) else f.flag_id
-            ftype = f.get("flag_type") if isinstance(f, dict) else f.flag_type
-            ruling, cited = _RULING_BY_FLAG.get(ftype, ("unresolvable_escalate", []))
-            if second and ruling == "needs_income_corroboration":
-                ruling, cited = "benign_explained", [
-                    "follow_up_observations.bank_statement.verified_annual_income"]
-            out.append(FlagRuling(flag_id=fid, ruling=ruling, cited_evidence=cited))
-        return out
-
-    return fake
+from ._fakejudge import assert_flags_known, fake_extract, make_fake_judge
 
 
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
-    monkeypatch.setattr(pipeline, "run_judge", _good_judge())
-    monkeypatch.setattr(J, "extract_condition", lambda note: [])
+    monkeypatch.setattr(pipeline, "run_judge", make_fake_judge())
+    monkeypatch.setattr(J, "extract_condition", fake_extract)
 
 
 # ---------------------------------------------------------------------------
 # 1. Baseline: the whole labeled set replays CLEAN.
 # ---------------------------------------------------------------------------
+def test_all_fixture_flags_are_known_to_the_stub():
+    """Loud guard (the hole the audit found — test_pipeline was guarded, eval was
+    NOT): every grey-zone flag any fixture raises must have a ruling in the shared
+    stub, else it silently defaults to escalate → REFER and the replay below can
+    pass for the wrong reason. A new flag (e.g. cross_signal_moral_hazard) fails
+    HERE with a clear message instead of hiding."""
+    for p in sorted(FIX.glob("*.json")):
+        inp = ProposalInput(**json.loads(p.read_text(encoding="utf-8"))["input"])
+        assert_flags_known(inp, p.stem)
+
+
 def test_baseline_replay_is_clean():
     rep = E.replay()
     assert rep.total >= 5, "the claim-master seed should hold every fixture"

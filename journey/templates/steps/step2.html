@@ -1,0 +1,57 @@
+<section class="card">
+  <h1>Product &amp; Sum Insured</h1>
+  <p style="color:var(--text-2);margin-bottom:var(--sp-5)">
+    Choose the plan, sum insured, tenure and riders. The premium shown is
+    <strong>indicative — subject to underwriting</strong> (Step 5 is the real decision).
+  </p>
+
+  <div class="grid2">
+    <div class="field">
+      <label>Product type</label>
+      <select class="input" id="p-type">
+        <option value="individual_health" {{ 'selected' if product.type == 'individual_health' else '' }}>Individual</option>
+        <option value="family_floater" {{ 'selected' if product.type == 'family_floater' else '' }}>Family Floater</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Sum insured</label>
+      <select class="input" id="p-si">
+        {% set cur = product.sum_assured or 500000 %}
+        {% for v, lbl in [(300000,'₹3L (floor)'),(500000,'₹5L'),(1000000,'₹10L'),(2500000,'₹25L'),(5000000,'₹50L'),(10000000,'₹1Cr')] %}
+          <option value="{{ v }}" {{ 'selected' if cur == v else '' }}>{{ lbl }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>Tenure</label>
+      <select class="input" id="p-tenure">
+        {% for t in [1,2,3] %}<option value="{{ t }}" {{ 'selected' if (product.tenure_years or 1) == t else '' }}>{{ t }} year{{ 's' if t>1 else '' }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>Indicative annual premium</label>
+      <div class="kv" style="background:var(--brand-wash);border-color:var(--brand-tint)">
+        <span class="v mono" id="premium-total" style="font-size:var(--fs-h2)">—</span>
+        <span class="k" style="text-transform:none;color:var(--text-2)">Indicative — subject to underwriting</span>
+      </div>
+    </div>
+  </div>
+
+  <h2 style="font-size:var(--fs-h2);margin:var(--sp-6) 0 var(--sp-3)">Riders &amp; add-ons <span class="micro">IRDAI 2024</span></h2>
+  <div class="grid2" id="riders">
+    {% set chosen = product.riders or [] %}
+    {% for r in riders_catalog %}
+      <label class="consent-row" style="padding:var(--sp-2);border:1px solid var(--line);border-radius:var(--radius-sm)">
+        <input type="checkbox" class="rider" value="{{ r.id }}" {{ 'checked' if r.id in chosen else '' }}>
+        <span style="color:var(--text)">{{ r.label }}</span>
+      </label>
+    {% endfor %}
+  </div>
+
+  <div id="premium-detail" style="margin-top:var(--sp-4);font-size:var(--fs-cap);color:var(--text-2)"></div>
+  <button class="btn btn-primary" id="save-product" style="margin-top:var(--sp-4)">Save &amp; continue prep</button>
+  <span class="msg" id="product-msg"></span>
+
+  <input type="hidden" id="app-id" value="{{ app.id }}">
+</section>
+<script src="/journey/static/step2.js"></script>

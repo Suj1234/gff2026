@@ -44,7 +44,15 @@ def fetch_profile(mobile: str, *, insurer_slug: str = "acme", timeout: int = 40)
     path = os.getenv("MOBILE_PAN_ENDPOINT", "/api/external/prefill/mobile")
     url = f"{base}{path}"
     payload = {"mobile": mobile, "insurer_slug": insurer_slug}  # insurer_slug REQUIRED
-    r = requests.post(url, json=payload, headers=_headers(), timeout=timeout)
-    r.raise_for_status()
-    body = r.json()
-    return body.get("data", body) if isinstance(body, dict) else {}
+    # The POC gateway flaps 502/503 intermittently; one retry clears most transients.
+    # ponytail: fixed 1-retry, no exponential backoff — POC-grade; add backoff if it flaps hard.
+    last: Exception | None = None
+    for attempt in range(2):
+        r = requests.post(url, json=payload, headers=_headers(), timeout=timeout)
+        if r.status_code in (502, 503, 504):
+            last = requests.HTTPError(f"{r.status_code} transient", response=r)
+            continue
+        r.raise_for_status()
+        body = r.json()
+        return body.get("data", body) if isinstance(body, dict) else {}
+    raise last  # both attempts hit a transient gateway error

@@ -1,0 +1,101 @@
+<section class="card">
+  <h1>Underwriting Decision</h1>
+  {% if not report %}
+    <p style="color:var(--text-2);margin-bottom:var(--sp-4)">
+      All collected facts (identity, product, financial, health) are assembled into one bundle.
+      Run the agent to produce the Core-6 verdict and the full explainable report.
+    </p>
+    <button class="btn btn-primary" id="run-decision">Run underwriting →</button>
+    <span class="msg" id="decision-msg"></span>
+    <input type="hidden" id="app-id" value="{{ app.id }}">
+    <script src="/journey/static/step5.js"></script>
+  {% else %}
+    {% set d = report.decision %}
+    {% set icons = {"ISSUE":"✓","ISSUE_WITH_LOADING":"₹","STEP_UP":"⇪","POSTPONE":"⏸","REFER":"⚑","DECLINE":"✕"} %}
+    <div class="verdict-banner v-{{ d.verdict }}" style="margin-bottom:var(--sp-5)">
+      <div class="icon">{{ icons.get(d.verdict, "•") }}</div>
+      <div>
+        <div class="code">Core-6 · {{ d.verdict }}</div>
+        <h2>{{ d.reason_summary or d.verdict }}</h2>
+        {% if d.escalation_reason %}<p style="color:var(--text-2)">Reason: {{ d.escalation_reason }}</p>{% endif %}
+        {% if d.next_step %}<p style="color:var(--warn)">Next: {{ d.next_step }}{% if decision.waiting_on %} (waiting on: {{ decision.waiting_on }}){% endif %}</p>{% endif %}
+        {% if d.loading_pct %}<p>Indicative loading: +{{ d.loading_pct }}%</p>{% endif %}
+      </div>
+    </div>
+
+    {# ---- Safety Score gauge ---- #}
+    {% set ss = report.safety_score %}
+    {% if ss %}
+    {% set band = ss.band.split(' ')[0] %}
+    <div class="grid2" style="margin-bottom:var(--sp-5)">
+      <div class="card" style="box-shadow:none">
+        <span class="micro">Safety Score</span>
+        <div class="gauge"><span class="num band-{{ band }}">{{ ss.value }}</span><span class="band-{{ band }}">/ 100 · {{ ss.band }}</span></div>
+        <div class="track" style="margin-top:var(--sp-2)"><span class="band-{{ band }}" style="width:{{ ss.value }}%;background:currentColor"></span></div>
+        <p style="color:var(--text-3);font-size:var(--fs-cap);margin-top:var(--sp-2)">Higher = safer. Band ≠ verdict — hard gates &amp; grey-zone drive the decision.</p>
+      </div>
+      {# ---- Risk scores ---- #}
+      {% set rs = report.risk_scores %}
+      {% if rs %}
+      <div class="card" style="box-shadow:none">
+        <span class="micro">Fraud / Anomaly / Graph</span>
+        <div class="grid2" style="margin-top:var(--sp-2)">
+          <div class="kv"><span class="k">Fraud</span><span class="v mono">{{ rs.fraud_score }}</span></div>
+          <div class="kv"><span class="k">Anomaly</span><span class="v mono">{{ rs.anomaly_score }}</span></div>
+          <div class="kv"><span class="k">Graph</span><span class="v mono">{{ rs.graph_score }}</span></div>
+          <div class="kv"><span class="k">Band</span><span class="v">{{ rs.composite_band }}</span></div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# ---- Per-source scoring breakdown ---- #}
+    <h2 style="font-size:var(--fs-h2);margin-bottom:var(--sp-3)">Scoring breakdown</h2>
+    <div style="overflow-x:auto"><table class="scoring">
+      <thead><tr><th>Source group</th><th class="num">Weight</th><th class="num">Sub-score</th><th class="num">Contribution</th><th>Why</th></tr></thead>
+      <tbody>
+      {% for row in report.scoring_breakdown %}
+        <tr>
+          <td>{{ row.source_group }}</td>
+          <td class="num">{{ (row.weight*100)|round|int }}%</td>
+          <td class="num">{{ row.risk_sub_score }}</td>
+          <td class="num">{{ row.contribution }}</td>
+          <td style="color:var(--text-2)">{{ row.why }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+
+    {# ---- BRE flags ---- #}
+    {% set bre = report.bre_result %}
+    {% if bre and bre.soft_flags %}
+    <h2 style="font-size:var(--fs-h2);margin:var(--sp-5) 0 var(--sp-3)">Business-rule flags</h2>
+    <div style="display:flex;flex-direction:column;gap:var(--sp-2)">
+      {% for f in bre.soft_flags %}
+        <div class="kv"><span class="k">{{ f.flag_type }} · {{ f.related_rule }}
+          <span class="tag {{ 'bad' if f.severity=='high' else ('warn' if f.severity=='moderate' else 'ok') }}">{{ f.severity }}</span></span>
+          <span class="v">{{ f.reason }}</span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ---- LLM cited-evidence chain ---- #}
+    {% if report.cited_evidence_chain %}
+    <h2 style="font-size:var(--fs-h2);margin:var(--sp-5) 0 var(--sp-3)">Agent evidence chain</h2>
+    <div class="evidence">
+      {% for e in report.cited_evidence_chain %}
+        <div><strong>{{ e.ruling or "cited" }}</strong> — {{ e.claim }}<br><span class="path">{{ e.cited_source }}</span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ---- Run metadata ---- #}
+    {% set m = report.run_metadata %}
+    {% if m %}
+    <p style="color:var(--text-3);font-size:var(--fs-cap);margin-top:var(--sp-5)">
+      rules {{ m.rules_version }}{% if m.model %} · model {{ m.model }}{% endif %}{% if m.total_cost_usd %} · cost ${{ "%.4f"|format(m.total_cost_usd) }}{% endif %}
+    </p>
+    {% endif %}
+  {% endif %}
+</section>

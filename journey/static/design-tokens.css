@@ -1,0 +1,189 @@
+/* =============================================================================
+   design-tokens.css — Aegis Underwriting Console
+   SINGLE SOURCE OF TRUTH for color, type, spacing, radius, elevation, motion.
+   Every page/component MUST consume these variables — never hardcode a hex,
+   px scale, or font name in a component. See DESIGN.md for the rules + rationale.
+
+   Light is the default (the researched choice for an insurer/underwriter buyer:
+   trustworthy, auditable, procurement-deck friendly). Dark is an opt-in focus
+   mode. Both are first-class — never naive-invert; each is tuned.
+
+   Theme switching:
+   - :root                          → light defaults
+   - @media (prefers-color-scheme)  → follows the OS
+   - :root[data-theme="dark|light"] → an explicit toggle wins over the OS
+   ============================================================================= */
+
+:root {
+  /* ---------------------------------------------------------------------------
+     BRAND ACCENT — deep teal-petrol.
+     Rationale: unoccupied in the India health-insurance market (peers cluster on
+     trust-navy or toy-bright), reads clinical + premium + trustworthy.
+     RULE: brand is spent ONLY on the primary action, the active step, and
+     selection/focus. It is NEVER a risk/status color.
+     --------------------------------------------------------------------------- */
+  --brand-950: #063A3D;
+  --brand-900: #0A4F52;
+  --brand-700: #0E7C86;   /* base brand */
+  --brand:     #0E7C86;   /* alias of -700, use this in components */
+  --brand-600: #0D9488;   /* hover */
+  --brand-500: #14B8A6;   /* bright / focus ring */
+  --brand-300: #5EE0D6;
+  --brand-tint:#D3EFEF;   /* subtle border on brand surfaces */
+  --brand-wash:#EAF7F6;   /* subtle brand background fill */
+
+  /* WARM HIGHLIGHT — a single positive/energy note (warm-cool pairing).
+     Use sparingly: positive accents, optional emphasis. Not a status color. */
+  --gold-600:  #B8801F;
+  --gold:      #E0A73B;
+  --gold-wash: #FBF1D7;
+
+  /* ---------------------------------------------------------------------------
+     NEUTRAL RAMP — slate, biased a few degrees toward blue (chosen, not a
+     default grey). 0 = lightest surface → 7 = near-black text.
+     --------------------------------------------------------------------------- */
+  --n-0: #FBFCFD;   /* app background */
+  --n-1: #F2F5F8;   /* subtle surface / sidebar */
+  --n-2: #E4E9EF;   /* borders (default) */
+  --n-3: #CDD5DF;   /* strong border / disabled */
+  --n-4: #94A0AE;   /* tertiary text / muted icon */
+  --n-5: #4C5766;   /* secondary text */
+  --n-6: #28313D;   /* strong text */
+  --n-7: #0F1620;   /* headings / max contrast */
+
+  /* ---------------------------------------------------------------------------
+     SEMANTIC SEVERITY — risk + decision states ONLY. Kept strictly separate
+     from --brand so "important" (brand) and "dangerous" (red) never collide.
+     Score gauge bands and BRE flags map to these, never to the brand teal.
+       ok   = ISSUE / low risk / verified
+       warn = REFER / STEP-UP / moderate risk / attention
+       bad  = DECLINE / high risk / hard fail
+       info = neutral informational
+     --------------------------------------------------------------------------- */
+  --ok:        #158048;   --ok-tint:   #DEF4E7;
+  --warn:      #B26A08;   --warn-tint: #FBEFD6;
+  --bad:       #BB2029;   --bad-tint:  #FBE6E7;
+  --info:      #1E5AD6;   --info-tint: #E1EAFB;
+
+  /* ---------------------------------------------------------------------------
+     SEMANTIC SURFACES / TEXT — components reference THESE, not the ramp directly.
+     --------------------------------------------------------------------------- */
+  --bg:        var(--n-0);
+  --surface:   #FFFFFF;   /* cards, header, rail */
+  --surface-2: var(--n-1);/* content canvas / subtle fills */
+  --line:      var(--n-2);
+  --line-2:    var(--n-3);
+  --text:      var(--n-7);
+  --text-2:    var(--n-5);
+  --text-3:    var(--n-4);
+
+  /* ---------------------------------------------------------------------------
+     TYPOGRAPHY — three roles. All SIL OFL 1.1, self-hosted as @font-face data
+     URIs (the Artifact/prod CSP blocks font CDNs). Deliberately NOT Inter.
+       display = Space Grotesk (headings, big numbers)
+       body    = Geist Sans   (UI text)
+       mono    = Geist Mono   (all numerals, tabular figures, code paths)
+     --------------------------------------------------------------------------- */
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body:    "Geist", ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-mono:    "Geist Mono", ui-monospace, "Consolas", monospace;
+
+  /* Type scale (rem-friendly px). Weight band 300–600 ONLY — emphasize with
+     size + color, never heavier weight. Tracking tightens as size grows. */
+  --fs-display: 48px; --fw-display: 300; --tr-display: -0.02em;  /* Safety Score */
+  --fs-h1:      30px; --fw-h1:      400; --tr-h1:      -0.015em; /* screen title */
+  --fs-h2:      22px; --fw-h2:      500; --tr-h2:      -0.01em;
+  --fs-body:    15px; --fw-body:    400; --tr-body:     0;
+  --fs-cap:     13px; --fw-cap:     400;
+  --fs-micro:   11px; --fw-micro:   600; --tr-micro:   0.08em;   /* ALL-CAPS labels */
+
+  /* ---------------------------------------------------------------------------
+     SPACING — 4px base, 8px working grid.
+     Rhythm: 8/12/16 inside components · 24 between blocks · 64–96 between regions.
+     --------------------------------------------------------------------------- */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-8: 48px; --sp-10: 64px; --sp-12: 96px;
+
+  /* RADIUS */
+  --radius-sm: 10px;
+  --radius:    14px;   /* default card */
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  /* ELEVATION — borders + tint first, shadows last. One meaningful shadow per
+     layer. sh-1 = resting card, sh-2 = raised, sh-3 = floating (browser frame). */
+  --sh-1: 0 1px 2px rgba(15,22,32,.05);
+  --sh-2: 0 2px 6px rgba(15,22,32,.05), 0 14px 30px -14px rgba(15,22,32,.14);
+  --sh-3: 0 8px 18px rgba(15,22,32,.06), 0 34px 70px -22px rgba(15,22,32,.3);
+  --glow: 0 0 0 1px var(--brand-600), 0 8px 26px -8px var(--brand-500);
+
+  /* MOTION — three curves, everything <=300ms except one deliberate celebration.
+     Animate transform/opacity only. Respect prefers-reduced-motion. */
+  --ease:  cubic-bezier(.16, 1, .3, 1);   /* smooth: panels, reveals, gauge */
+  --snap:  cubic-bezier(.32, .72, 0, 1);  /* snappy: buttons, tabs, hovers */
+  --spring:cubic-bezier(.34, 1.56, .64, 1);/* one celebratory moment only */
+  --dur-fast: 120ms;   /* press / micro */
+  --dur-base: 200ms;   /* hover / state */
+  --dur-slow: 300ms;   /* panel / step transition */
+  --dur-gauge: 1300ms; /* score gauge sweep (one-time reveal) */
+}
+
+/* ---- DARK (follows OS) — tuned, not inverted. Surfaces lighten as they
+   elevate; brand + semantics brighten & de-saturate to pass contrast on
+   near-black; never pure #000/#fff. ---- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --n-0: #080B10; --n-1: #0E131A; --n-2: #1A2129; --n-3: #28313C;
+    --n-4: #586474; --n-5: #8B97A6; --n-6: #C6CEDA; --n-7: #F3F6FA;
+    --brand: #2ED0C4; --brand-600: #22C1B6; --brand-500: #46E0D3; --brand-300: #7DF0E6;
+    --brand-700: #2ED0C4; --brand-tint: #0D3B3A; --brand-wash: #0A2A2A; --brand-900: #0A4F52;
+    --gold: #F1C267; --gold-600: #E0A73B; --gold-wash: #2E2409;
+    --ok: #37CC7E; --ok-tint: #0A2418; --warn: #F0B44C; --warn-tint: #2A1F08;
+    --bad: #F26D72; --bad-tint: #2C1214; --info: #5C90F0; --info-tint: #0E1D38;
+    --bg: var(--n-0); --surface: #0E131A; --surface-2: #0B0F15;
+    --line: var(--n-2); --line-2: var(--n-3);
+    --text: var(--n-7); --text-2: var(--n-5); --text-3: var(--n-4);
+    --sh-1: none;
+    --sh-2: 0 2px 8px rgba(0,0,0,.5), 0 18px 38px -16px rgba(0,0,0,.7);
+    --sh-3: 0 8px 20px rgba(0,0,0,.6), 0 40px 80px -24px rgba(0,0,0,.85);
+    --glow: 0 0 0 1px var(--brand-600), 0 8px 30px -6px var(--brand-500);
+  }
+}
+
+/* ---- Explicit toggle wins over the OS in BOTH directions ---- */
+:root[data-theme="dark"] {
+  --n-0: #080B10; --n-1: #0E131A; --n-2: #1A2129; --n-3: #28313C;
+  --n-4: #586474; --n-5: #8B97A6; --n-6: #C6CEDA; --n-7: #F3F6FA;
+  --brand: #2ED0C4; --brand-600: #22C1B6; --brand-500: #46E0D3; --brand-300: #7DF0E6;
+  --brand-700: #2ED0C4; --brand-tint: #0D3B3A; --brand-wash: #0A2A2A; --brand-900: #0A4F52;
+  --gold: #F1C267; --gold-600: #E0A73B; --gold-wash: #2E2409;
+  --ok: #37CC7E; --ok-tint: #0A2418; --warn: #F0B44C; --warn-tint: #2A1F08;
+  --bad: #F26D72; --bad-tint: #2C1214; --info: #5C90F0; --info-tint: #0E1D38;
+  --bg: var(--n-0); --surface: #0E131A; --surface-2: #0B0F15;
+  --line: var(--n-2); --line-2: var(--n-3);
+  --text: var(--n-7); --text-2: var(--n-5); --text-3: var(--n-4);
+  --sh-1: none;
+  --sh-2: 0 2px 8px rgba(0,0,0,.5), 0 18px 38px -16px rgba(0,0,0,.7);
+  --sh-3: 0 8px 20px rgba(0,0,0,.6), 0 40px 80px -24px rgba(0,0,0,.85);
+  --glow: 0 0 0 1px var(--brand-600), 0 8px 30px -6px var(--brand-500);
+}
+:root[data-theme="light"] {
+  --n-0: #FBFCFD; --n-1: #F2F5F8; --n-2: #E4E9EF; --n-3: #CDD5DF;
+  --n-4: #94A0AE; --n-5: #4C5766; --n-6: #28313D; --n-7: #0F1620;
+  --brand: #0E7C86; --brand-700: #0E7C86; --brand-600: #0D9488; --brand-500: #14B8A6;
+  --brand-300: #5EE0D6; --brand-tint: #D3EFEF; --brand-wash: #EAF7F6; --brand-900: #0A4F52;
+  --gold: #E0A73B; --gold-600: #B8801F; --gold-wash: #FBF1D7;
+  --ok: #158048; --ok-tint: #DEF4E7; --warn: #B26A08; --warn-tint: #FBEFD6;
+  --bad: #BB2029; --bad-tint: #FBE6E7; --info: #1E5AD6; --info-tint: #E1EAFB;
+  --bg: var(--n-0); --surface: #FFFFFF; --surface-2: var(--n-1);
+  --line: var(--n-2); --line-2: var(--n-3);
+  --text: var(--n-7); --text-2: var(--n-5); --text-3: var(--n-4);
+  --sh-1: 0 1px 2px rgba(15,22,32,.05);
+  --sh-2: 0 2px 6px rgba(15,22,32,.05), 0 14px 30px -14px rgba(15,22,32,.14);
+  --sh-3: 0 8px 18px rgba(15,22,32,.06), 0 34px 70px -22px rgba(15,22,32,.3);
+  --glow: 0 0 0 1px var(--brand-600), 0 8px 26px -8px var(--brand-500);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ app.application_number }} — Underwriting Console{% endblock %}
+{% block body %}
+<div class="console">
+  <header class="appbar">
+    <div class="appbar__id">
+      <span class="num">{{ app.application_number }}</span>
+      <span class="name">{{ applicant.name or "New applicant" }}</span>
+    </div>
+    <nav class="stepper" aria-label="Onboarding steps">
+      {% for id, label, subs in steps %}
+        {% set state = "done" if id < active_step else ("active" if id == active_step else "upcoming") %}
+        <div class="step {{ state }}">
+          <span class="dot">{% if id < active_step %}✓{% else %}{{ id }}{% endif %}</span>
+          <span>{{ label }}</span>
+          {% if id == active_step %}
+            <span class="substeps">{% for s in subs %}<span>{{ s }}</span>{% if not loop.last %}<span>·</span>{% endif %}{% endfor %}</span>
+          {% endif %}
+        </div>
+        {% if not loop.last %}<span class="step__sep"></span>{% endif %}
+      {% endfor %}
+    </nav>
+    {% set pct = (active_step / 7 * 100) | round | int %}
+    <span class="progress"><span class="pct">{{ pct }}%</span><span class="bar"><span style="width:{{ pct }}%"></span></span></span>
+  </header>
+
+  <div class="content">
+    <main class="canvas">
+      {% include "steps/step" ~ active_step ~ ".html" ignore missing %}
+    </main>
+    {% include "rail.html" %}
+  </div>
+
+  <footer class="footer-bar">
+    {% if active_step > 1 %}
+      <a class="btn btn-secondary" href="/journey/app/{{ app.id }}?step={{ active_step - 1 }}">‹ Back</a>
+    {% else %}<span></span>{% endif %}
+    {% if active_step < 7 %}
+      <a class="btn btn-primary" href="/journey/app/{{ app.id }}?step={{ active_step + 1 }}">Continue ›</a>
+    {% else %}<span></span>{% endif %}
+  </footer>
+</div>
+{% endblock %}

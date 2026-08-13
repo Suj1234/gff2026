@@ -73,12 +73,18 @@ _GROUP_TO_SECTION = {
 }
 
 
-def _level(sub_score: float) -> str:
+def _level(sub_score: float, assessed: bool = True) -> str:
     """Map a 0-100 sub-score to a risk LEVEL label (inverse of safety band).
 
     Higher sub-score = safer = Low risk. Uses the same band cutoffs as the
     composite safety score (§4A) so section levels and the overall score agree.
+
+    `assessed=False` (the source never arrived) returns "Not Assessed" — NOT "Low".
+    This is the fix for the absent-source bug: a section for a source that was never
+    checked must not read as a clean/Low result asserting a state never observed.
     """
+    if not assessed:
+        return "Not Assessed"
     band = C.safety_band(sub_score)
     return {"Low Risk": "Low", "Moderate Risk": "Moderate", "High Risk": "High"}[band]
 
@@ -110,20 +116,21 @@ def _report_meta(inp: ProposalInput) -> dict[str, Any]:
 def _sections(breakdown) -> dict[str, SectionEvaluation]:
     """Per-source sections with derived risk levels (§8 sections).
 
-    Every scored group yields a section (Low/Moderate/High), so a partial bundle
-    still produces a full sections block rather than missing keys — never a crash
-    (§11). CAVEAT: an absent source currently scores clean → "Low"; see the
-    module docstring's KNOWN LIMITATION. The level here is exactly the band of
-    whatever sub_score the scorer returned, no more.
+    Every scored group yields a section, so a partial bundle still produces a full
+    sections block rather than missing keys — never a crash (§11). An UNASSESSED
+    group (source never arrived) is now surfaced as risk_level "Not Assessed" with
+    `assessed=False`, NOT a clean "Low" — the fix for the KNOWN LIMITATION where an
+    absent source read as a clean, checked result.
     """
     out: dict[str, SectionEvaluation] = {}
     for row in breakdown:
         name = _GROUP_TO_SECTION.get(row.source_group, row.source_group)
         out[name] = SectionEvaluation(
-            risk_level=_level(row.risk_sub_score),
+            risk_level=_level(row.risk_sub_score, row.assessed),
             sub_score=row.risk_sub_score,
             weight=row.weight,
             findings=row.why,
+            assessed=row.assessed,
         )
     return out
 

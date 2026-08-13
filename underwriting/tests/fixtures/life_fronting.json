@@ -1,0 +1,56 @@
+{
+  "_note": "LIFE fronting/proxy — THE differentiator demo. Every individual rule passes (PAN valid, liveness ok, income covers SA, age in band). But R-M2 sees the COMBINATION no single rule flags: mobile holder-name mismatch + premium paid by a third party + elderly parent nominee for a young single applicant + sudden 1.5cr SA with no prior cover. Raises cross_signal_moral_hazard → judge escalates → REFER. Rules-view = clean; agent-view = refer on the combination.",
+  "input": {
+    "proposal_id": "LIFE-FRONTING-001",
+    "meta": { "channel": "agent_portal", "insurer": "Acme Life", "persona": "fronting" },
+    "application": {
+      "applicant": {
+        "name": "Karan Malhotra",
+        "dob": "1992-09-03",
+        "gender": "male",
+        "age": 33,
+        "marital_status": "single",
+        "address": "3 Hill Road, Bandra, Mumbai, 400050",
+        "pincode": "400050"
+      },
+      "occupation": { "declared_type": "salaried", "declared_occupation": "sales_executive", "employer_declared": "Acme Retail Ltd" },
+      "product": { "type": "term_life", "plan_variant": "term", "sum_assured": 15000000, "premium": 34000, "tenure_years": 30, "premium_payment_term": 30, "payment_mode": "annual" },
+      "financial": { "declared_annual_income": 2500000, "source_of_funds": "salary", "human_life_value": 55000000, "dependents_count": 0 },
+      "nominee": { "name": "Ramesh Malhotra", "relationship": "father", "dob": "1958-04-11" },
+      "premium_payer": "third_party",
+      "backdating_requested": false,
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 176, "weight_kg": 73, "bmi": 23.6, "conditions": [], "tobacco": false, "alcohol": false, "drugs": false, "past_medical_history": "none", "ongoing_medication": "none", "family_history": [] }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9820033445", "provider": "Vi", "vintage_months": 8, "ported_recently": false, "on_revocation_list": false, "holder_name": "Ramesh Malhotra" },
+      "pan_verify": { "status": "available", "pan": "AKMPM9911P", "pan_status": "valid", "name": "Karan Malhotra", "dob": "1992-09-03", "aadhaar_seeded": true, "address": "3 Hill Road, Bandra, Mumbai, 400050" },
+      "aadhaar_ekyc": { "status": "available", "name": "Karan Malhotra", "dob": "1992-09-03", "address": "3 Hill Road, Bandra, Mumbai, 400050", "photo": true },
+      "ckyc": { "status": "available", "existing_record": true, "name": "Karan Malhotra", "dob": "1992-09-03", "address": "3 Hill Road, Bandra, Mumbai, 400050" },
+      "liveness_facematch": { "status": "available", "liveness_pass": true, "liveness_score": 0.93, "face_match_score": 0.96, "deepfake_flag": false },
+      "itr": { "status": "available", "name": "Karan Malhotra", "latest_total_taxable_income": 2500000 },
+      "account_aggregator": { "status": "available", "name": "Karan Malhotra", "imputed_annual_income": 2500000, "income_source": "gst_itr", "avg_monthly_balance": 220000, "expense_to_income": 0.35 },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "400050", "morbidity_index": 0.25, "fraud_hotspot_flag": false },
+      "velocity_graph": { "status": "available", "velocity_score": 0.1, "shared_device_count": 0, "cross_product_count_45d": 0 },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false, "lists_checked": ["UN", "OFAC", "RBI_caution"] },
+      "iib": { "status": "available", "num_policies": 0, "num_insurers": 0, "life_inforce_sa": 0, "total_inforce_sa": 0, "claim_match": false },
+      "pre_policy_medical": { "status": "available", "exam": { "bmi": 23.6, "bp": "120/78" }, "lab": [{ "test": "fasting_glucose", "result": 90, "ref": "70-99" }, { "test": "total_cholesterol", "result": 180, "ref": "<200" }, { "test": "hemoglobin", "result": 15.0, "ref": "13.5-17.5" }, { "test": "creatinine", "result": 0.9, "ref": "0.7-1.3" }] },
+      "ml_scores": { "fraud_score": 0.2, "anomaly_score": 0.15, "graph_score": 0.1 }
+    },
+    "documents": [],
+    "follow_up_observations": {}
+  },
+  "expected": {
+    "decision": "REFER",
+    "expected_outcome": "GREY-ZONE",
+    "expected_bre_outcome": "GREY-ZONE",
+    "expected_flag_types": ["cross_signal_moral_hazard"],
+    "expected_rulings": [
+      { "flag_type": "cross_signal_moral_hazard", "ruling": "unresolvable_escalate" }
+    ]
+  }
+}

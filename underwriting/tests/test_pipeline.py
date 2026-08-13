@@ -33,56 +33,19 @@ def _load(name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Offline judge stub (same shape as test_grounding.py). Grey-zone flags get a
-# grounded ruling so the deterministic decision path runs without a network call.
+# Offline judge stub — now the ONE shared helper (underwriting/tests/_fakejudge.py),
+# consolidated from the copy that used to live here (repo L-A1). Grey-zone flags
+# get a grounded ruling so the deterministic decision path runs without a network
+# call. A new flag type is added in _fakejudge.py once, not in three copies.
 # ---------------------------------------------------------------------------
-def _fake_extract(note_text: str):
-    return []
-
-
-# Per-fixture canned rulings, keyed by flag_type → (ruling, cited real path).
-# Grounded citations resolve against the real bundle so the grounding gate passes.
-_RULING_BY_FLAG = {
-    "non_disclosure_signal": ("unresolvable_escalate", ["signals.abha_health_records.icd_codes"]),
-    "moderate_ml_score": ("unresolvable_escalate", ["signals.velocity_graph.velocity_score"]),
-    "ckyc_mismatch": ("unresolvable_escalate", ["signals.ckyc.address"]),
-    "velocity_anomaly": ("unresolvable_escalate", ["signals.velocity_graph.velocity_score"]),
-    "thin_file": ("needs_income_corroboration", ["signals.account_aggregator.imputed_annual_income"]),
-    "income_thin_file": ("needs_income_corroboration", ["signals.account_aggregator.imputed_annual_income"]),
-    "adverse_litigation": ("unresolvable_escalate", ["signals.litigation_fir.cases"]),
-    "gst_alert": ("unresolvable_escalate", ["signals.gst.activeAlerts"]),
-}
-
-
-def _make_fake_judge():
-    """A stateful judge stub: cycle 1 rules by flag_type (`_RULING_BY_FLAG`); on the
-    re-judge (cycle 2) any `needs_income_corroboration` flips to benign_explained
-    citing the gathered doc — so anjali resolves gather → re-judge → ISSUE, the
-    canonical two-cycle path (test_grounding.py owns the doc-never-arrives variant)."""
-    calls = {"n": 0}
-
-    def fake(evidence_bundle, flags, follow_up_observations=None):
-        calls["n"] += 1
-        second_cycle = calls["n"] >= 2
-        out = []
-        for f in flags:
-            fid = f["flag_id"] if isinstance(f, dict) else f.flag_id
-            ftype = f.get("flag_type") if isinstance(f, dict) else f.flag_type
-            ruling, cited = _RULING_BY_FLAG.get(ftype, ("unresolvable_escalate", []))
-            if second_cycle and ruling == "needs_income_corroboration":
-                ruling = "benign_explained"
-                cited = ["follow_up_observations.bank_statement.verified_annual_income"]
-            out.append(FlagRuling(flag_id=fid, ruling=ruling, cited_evidence=cited))
-        return out
-
-    return fake
+from ._fakejudge import RULING_BY_FLAG, assert_flags_known, fake_extract, make_fake_judge
 
 
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
     """Keep every pipeline run in this module off the network."""
-    monkeypatch.setattr(pipeline, "run_judge", _make_fake_judge())
-    monkeypatch.setattr(J, "extract_condition", _fake_extract)
+    monkeypatch.setattr(pipeline, "run_judge", make_fake_judge())
+    monkeypatch.setattr(J, "extract_condition", fake_extract)
 
 
 # ---------------------------------------------------------------------------
@@ -110,9 +73,7 @@ def test_fixture_end_to_end_full_report(name, expected_verdict):
     # Guard: if a (future) grey-zone fixture raises a flag the offline fake judge
     # doesn't know, it silently defaults to ungrounded escalate → REFER, which
     # would make this test lie. Fail loudly instead so the stub gets extended.
-    from underwriting.rules import run_bre
-    unknown = {f.flag_type for f in run_bre(inp).ambiguous_flags} - set(_RULING_BY_FLAG)
-    assert not unknown, f"{name}: fake judge has no ruling for {unknown}; extend _RULING_BY_FLAG"
+    assert_flags_known(inp, name)
 
     report = run_and_report(inp)
 
@@ -126,7 +87,11 @@ def test_fixture_end_to_end_full_report(name, expected_verdict):
     # 3. Every top-level §8 block is present and populated.
     assert report.report_meta["application_no"] == inp.proposal_id
     assert report.safety_score is not None and 0 <= report.safety_score.value <= 100
-    assert report.scoring_breakdown and abs(report.scoring_total["sum_of_weights"] - 1.0) < 1e-6
+    # sum_of_weights is now the ASSESSED weight (renormalization divisor): >0 and ≤1,
+    # and equal to the sum of weights over rows marked assessed (absent-source fix).
+    aw = report.scoring_total["sum_of_weights"]
+    assert report.scoring_breakdown and 0 < aw <= 1.0 + 1e-9
+    assert abs(aw - sum(r.weight for r in report.scoring_breakdown if r.assessed)) < 1e-6
     assert report.sections, "sections must be present"
     assert report.risk_scores is not None
     assert report.bre_result is not None

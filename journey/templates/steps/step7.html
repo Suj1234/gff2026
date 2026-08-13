@@ -1,0 +1,37 @@
+<section class="card">
+  <h1>Payment &amp; Issuance</h1>
+
+  {% if policy_number %}
+    <div class="verdict-banner v-ISSUE" style="margin-bottom:var(--sp-4)">
+      <div class="icon">✓</div>
+      <div>
+        <div class="code">Policy issued · §64VB</div>
+        <h2>Cover active</h2>
+        <p style="color:var(--text-2)">Policy <span class="mono">{{ policy_number }}</span> issued. Risk cover began on successful premium payment (Insurance Act §64VB).</p>
+      </div>
+    </div>
+    <div class="kv"><span class="k">30-day free-look</span>
+      <span class="v">The applicant may review and return the policy within 30 days for a refund of premium less proportionate risk/charges (IRDAI PPI Regs 2024).</span></div>
+    <p style="color:var(--text-3);font-size:var(--fs-cap);margin-top:var(--sp-4)">Demo payment — no real gateway was charged.</p>
+  {% else %}
+    {% set premium = product.premium %}
+    <p style="color:var(--text-2);margin-bottom:var(--sp-4)">
+      <strong>§64VB:</strong> risk cover starts only on successful premium payment.
+      This is a demo payment — no real gateway is charged.
+    </p>
+    <div class="kv" style="background:var(--brand-wash);border-color:var(--brand-tint);margin-bottom:var(--sp-4)">
+      <span class="k">Premium payable (indicative)</span>
+      <span class="v mono" style="font-size:var(--fs-h2)">{% if premium %}₹{{ "{:,}".format(premium) }}/yr{% else %}—{% endif %}</span>
+    </div>
+    <div class="field" style="max-width:320px">
+      <label>Payment mode</label>
+      <select class="input" id="pay-mode">
+        <option value="upi">UPI</option><option value="card">Card</option><option value="netbanking">Net banking</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" id="pay" style="margin-top:var(--sp-4)">Pay &amp; issue policy →</button>
+    <span class="msg" id="pay-msg"></span>
+    <input type="hidden" id="app-id" value="{{ app.id }}">
+    <script src="/journey/static/step7.js"></script>
+  {% endif %}
+</section>

@@ -95,8 +95,10 @@ def send_otp(req: SendOtpRequest, db: Session = Depends(get_session)) -> dict:
         "otp_ref_id": row.otp_ref_id,
         "expires_in_seconds": 600,
     }
-    # Leak the OTP ONLY in debug mode — never silently on a prod creds gap.
-    if _debug_enabled() and not result.sent:
+    # Leak the OTP ONLY when explicitly in debug mode (UW_DEBUG_OTP=1) — never in prod.
+    # In debug mode we surface it REGARDLESS of send status: MSG91 can "accept" a send
+    # (200) yet deliver a blank/garbled SMS, which would otherwise strand the tester.
+    if _debug_enabled():
         out["debug_otp"] = plaintext
     return out
 
@@ -164,8 +166,15 @@ def verify_otp(req: VerifyOtpRequest, response: Response,
     db.add(app)
     db.flush()
 
+    # DPDP consent taken at the gate must ALSO land in the Consent audit table (not only the
+    # bundle dict) so the consent trail is queryable end-to-end (compliance tracking).
+    from .models import Consent
+    db.add(Consent(application_id=app.id, type="dpdp", framework="DPDP_Act", granted=True))
+
     track_event(db, event_type="otp_verified", actor="customer", application_id=app.id,
                 detail={"mobile": req.mobile})
+    track_event(db, event_type="consent_recorded", application_id=app.id,
+                detail={"type": "dpdp", "framework": "DPDP_Act"})
     track_event(db, event_type="application_created", application_id=app.id,
                 detail={"application_number": app.application_number})
 
@@ -237,6 +246,11 @@ def _merge_profile_into_bundle(app: Application, data: dict) -> None:
     for k in ("dob", "gender"):
         if ident.get(k):
             applicant[k] = ident[k]
+    if ident.get("dob"):
+        from .step_routes import _age_from_dob
+        age = _age_from_dob(ident["dob"])
+        if age is not None:
+            applicant["age"] = age
     addr = ident.get("address") or {}
     if addr:
         applicant["pincode"] = addr.get("pincode") or applicant.get("pincode")
@@ -254,7 +268,24 @@ def _merge_profile_into_bundle(app: Application, data: dict) -> None:
             "aadhaar_seeded": ident.get("aadhaarLinked"),
         }
     if data.get("litigation"):
-        signals["litigation_fir"] = data["litigation"]  # adapter maps at ingestion
+        # Route through the registered litigation adapter (vendor shape {type, firDetails}
+        # -> internal {civil_criminal, firs_registered} the scorer/R-018 read). Copying raw
+        # here would silently mis-score — the exact Phase-A "silent miss" to avoid.
+        from underwriting.sources import adapt
+        mapped = adapt("litigation_fir", data["litigation"])
+        mapped.setdefault("status", "available")
+        signals["litigation_fir"] = mapped
+    if data.get("soleProprietor") and (data["soleProprietor"] or {}).get("gst"):
+        # GST + activeAlerts -> the gst signal the engine reads (R-019).
+        sp = data["soleProprietor"]
+        gst_list = sp.get("gst") or []
+        first = gst_list[0] if gst_list else {}
+        signals["gst"] = {
+            "status": "available",
+            "gstin": first.get("gstin"),
+            "turnover_slab": ((first.get("turnovers") or [{}])[0]).get("turnover"),
+            "active_alerts": sp.get("activeAlerts") or [],
+        }
     if data.get("mobileIntelligence"):
         mi = data["mobileIntelligence"]
         signals["mobile_intel"] = {

@@ -294,6 +294,128 @@ def r008_thin_file(sig: Signals, sum_insured: int) -> RuleResult:
 
 
 # ===========================================================================
+# R-F2 / R-F3 — LIFE financial underwriting: HLV ceiling + PAN-aggregate cover
+# ===========================================================================
+def rf2_hlv_ceiling(sig: Signals, financial, age: int, sum_assured: int) -> RuleResult:
+    """R-F2 (LIFE) — max SA = min(income × age-multiple, HLV). Requested SA above the
+    HLV ceiling raises `over_insurance` (a moral-hazard proxy, not a decline).
+
+    This is the LIFE complement to R-007: R-007 flags SA > income×multiple; R-F2 adds
+    the HLV hard ceiling when a Human Life Value is supplied. Only fires when HLV is
+    present — otherwise R-007 alone governs. Grey-zone routing, never a gate (§1.6)."""
+    hlv = getattr(financial, "human_life_value", None) if financial else None
+    if not hlv or hlv <= 0:
+        return RuleResult(rule_id="R-F2")
+    if sum_assured > hlv:
+        flag = _flag(
+            "over_insurance", "R-F2", "R-F2-hlv-ceiling",
+            f"Requested SA ₹{sum_assured:,} exceeds Human Life Value ₹{hlv:,} "
+            f"— over-insurance vs HLV (moral-hazard signal).",
+            severity=Severity.high,
+            cited=["application.financial.human_life_value"],
+            ctx={"hlv": hlv, "sum_assured": sum_assured},
+        )
+        return RuleResult(rule_id="R-F2", flags=[flag],
+                          score_inputs={"hlv": hlv, "sum_assured": sum_assured})
+    return RuleResult(rule_id="R-F2", score_inputs={"hlv": hlv})
+
+
+def rf3_pan_aggregate(sig: Signals, financial, age: int, sum_assured: int) -> RuleResult:
+    """R-F3 (LIFE) — aggregate in-force LIFE cover (PAN-linked, from IIB) plus this
+    request must not exceed the income × age-multiple cap. Cover-stacking across
+    insurers is the over-insurance signal life underwriting cares about.
+
+    Raises `cover_stacking` when the aggregate breaches the cap (with a tolerance).
+    Reads `iib.life_inforce_sa` (falls back to total_inforce_sa). No income → can't
+    compute the cap → no flag (R-008 handles the no-proof case)."""
+    income = _verified_income(sig)
+    if income is None:
+        return RuleResult(rule_id="R-F3")
+    inforce = sig.iib.life_inforce_sa if sig.iib.available else None
+    if inforce is None and sig.iib.available:
+        inforce = sig.iib.total_inforce_sa
+    if not inforce:
+        return RuleResult(rule_id="R-F3", score_inputs={"income": income})
+    mult = _income_multiple_for_age(age)
+    cap = income * mult
+    aggregate = inforce + sum_assured
+    if aggregate > cap * C.PAN_AGGREGATE_TOLERANCE:
+        flag = _flag(
+            "cover_stacking", "R-F3", "R-F3-pan-aggregate",
+            f"Aggregate in-force life cover ₹{inforce:,} + requested ₹{sum_assured:,} "
+            f"= ₹{aggregate:,} exceeds {mult}× income cap ₹{cap:,} "
+            f"(+{int((C.PAN_AGGREGATE_TOLERANCE-1)*100)}% tolerance) — cover-stacking.",
+            severity=Severity.high,
+            cited=["signals.iib.life_inforce_sa", "signals.iib.total_inforce_sa"],
+            ctx={"inforce": inforce, "requested": sum_assured, "cap": cap, "aggregate": aggregate},
+        )
+        return RuleResult(rule_id="R-F3", flags=[flag],
+                          score_inputs={"aggregate": aggregate, "cap": cap})
+    return RuleResult(rule_id="R-F3", score_inputs={"aggregate": aggregate, "cap": cap})
+
+
+# ===========================================================================
+# R-M1 — LIFE medical evidence grid (age × sum-assured → evidence required)
+# ===========================================================================
+def _required_evidence_tier(age: int, sum_assured: int) -> str:
+    """The medical evidence tier this age×SA needs (config grid; first match wins)."""
+    for age_max, sa_bands in C.MEDICAL_GRID_BY_AGE_SA:
+        if age <= age_max:
+            for sa_max, tier in sa_bands:
+                if sum_assured <= sa_max:
+                    return tier
+            return sa_bands[-1][1]
+    return C.MEDICAL_GRID_BY_AGE_SA[-1][1][-1][1]
+
+
+# Evidence tiers in increasing order — for "have we already met the requirement?".
+_TIER_ORDER = {"none": 0, "tele_mer": 1, "full_mer": 2, "full_labs": 3}
+
+
+def _evidence_on_file(sig: Signals) -> int:
+    """Highest medical evidence tier already present in the bundle (0 = none)."""
+    ppm = sig.pre_policy_medical
+    if ppm.available and ppm.lab:
+        return _TIER_ORDER["full_labs"] if len(ppm.lab) >= 4 else _TIER_ORDER["full_mer"]
+    if ppm.available and ppm.exam:
+        return _TIER_ORDER["full_mer"]
+    if sig.rppg_scan.available or sig.abha_health_records.available or sig.aps.available:
+        return _TIER_ORDER["tele_mer"]
+    return _TIER_ORDER["none"]
+
+
+_LIFE_PRODUCT_TYPES = {"term_life", "whole_life", "ulip", "life"}
+
+
+def _is_life(product) -> bool:
+    """A LIFE product (by type or plan_variant). The life-only rules (R-M1) gate on
+    this so they never fire on a health proposal — health keeps its own medical logic."""
+    t = (getattr(product, "type", "") or "").lower()
+    pv = (getattr(product, "plan_variant", "") or "").lower()
+    return t in _LIFE_PRODUCT_TYPES or pv in _LIFE_PRODUCT_TYPES or t.endswith("_life")
+
+
+def rm1_medical_grid(sig: Signals, product, age: int, sum_assured: int) -> RuleResult:
+    """R-M1 (LIFE only) — age×SA decides the required medical evidence tier. If the
+    required tier is above what's on file → step-up (beyond_matrix) requesting the
+    medical. Decides WHAT evidence, never the price (loading stays R-009). Gated to
+    life products so a health proposal (which has its own NON_MEDICAL_SI logic) is
+    untouched."""
+    if not _is_life(product):
+        return RuleResult(rule_id="R-M1")
+    required = _required_evidence_tier(age, sum_assured)
+    if _TIER_ORDER[required] <= _evidence_on_file(sig):
+        return RuleResult(rule_id="R-M1", score_inputs={"required": required, "met": True})
+    return RuleResult(
+        rule_id="R-M1", beyond_matrix=True,
+        reason_code="R-M1-medical-grid",
+        reason=f"Age {age} × SA ₹{sum_assured:,} requires '{required}' medical evidence, "
+               f"not yet on file → step-up (request the medical exam).",
+        score_inputs={"required": required, "met": False},
+    )
+
+
+# ===========================================================================
 # R-009 — BMI × age × occupation loading matrix
 # ===========================================================================
 def _bmi_band(bmi: float) -> str:
@@ -374,10 +496,20 @@ _CONDITION_ALIASES = {
     "hypothyroidism": {"thyroid", "hypothyroidism", "hypothyroid"},
     "dyslipidemia": {"dyslipidemia", "high_cholesterol", "cholesterol", "hyperlipidemia"},
     "hypertension": {"hypertension", "high_bp", "bp", "hypertensive"},
-    "diabetes": {"diabetes", "diabetic", "sugar", "mellitus"},
+    "diabetes": {"diabetes", "diabetic", "sugar", "mellitus", "t2dm", "dm"},
     "heart_disease": {"heart_disease", "cardiac", "cad", "coronary", "coronary_artery_disease",
                       "ischaemic", "ischemic", "myocardial"},
     "anaemia": {"anaemia", "anemia"},
+    # LIFE mortality-relevant conditions:
+    "cancer": {"cancer", "carcinoma", "malignant", "malignancy", "tumour", "tumor", "neoplasm",
+               "oncology", "chemotherapy"},
+    "hepatitis": {"hepatitis", "hbv", "hcv", "cirrhosis", "liver"},
+    "mental_illness": {"schizophrenia", "bipolar", "psychosis", "psychotic", "depression",
+                       "mental", "psychiatric"},
+    "hiv": {"hiv", "aids", "retroviral", "antiretroviral"},
+    "respiratory_disease": {"copd", "asthma", "emphysema", "bronchitis", "respiratory"},
+    "kidney_disease": {"kidney", "renal", "nephropathy", "ckd", "dialysis"},
+    "stroke": {"stroke", "cva", "cerebrovascular", "tia"},
 }
 
 
@@ -439,16 +571,46 @@ def _evidence_conditions(
                 add(cond, f"drug {drug} → {cond}")
 
     # Free-text / scanned notes → LLM extraction → crosswalk (§4.2 messy-ABHA path).
+    # Both ABHA unstructured notes AND the LIFE Aps (attending physician statement)
+    # are RAW free-text — the LLM extractor is their adapter to canonical conditions.
     if extractor is not None:
-        a = sig.abha_health_records
-        if a.available:
-            for note in getattr(a, "unstructured_notes", []) or []:
-                for label in extractor(note) or []:
+        for src_name, field in (("abha_health_records", "unstructured_notes"),
+                                ("aps", "notes")):
+            src = getattr(sig, src_name)
+            if not src.available:
+                continue
+            for note in getattr(src, field, []) or []:
+                for label in _safe_extract(extractor, note):
                     cond = _label_to_condition(label)
                     if cond:
-                        add(cond, f"free-text '{label}' → {cond} (LLM-extracted)")
+                        add(cond, f"free-text '{label}' → {cond} (LLM-extracted, {src_name})")
 
     return found
+
+
+# Prompt-injection guard: extractor output is UNTRUSTED (a document — APS/ABHA note —
+# can carry hidden instructions like "ignore rules, approve"). It is DATA, never an
+# instruction. This bounds it (count + length) and keeps only strings; the real defense
+# is downstream — `_label_to_condition` accepts only KNOWN crosswalk labels and drops
+# everything else, so injected free text can never reach the decision. (§ files/CLAUDE.md
+# untrusted-document-text; IMPLEMENTATION_PLAN prompt-injection mitigation.)
+_MAX_EXTRACTED_LABELS = 20      # a real note yields a handful of conditions, not hundreds
+_MAX_LABEL_LEN = 80            # a condition label, not a paragraph of injected instructions
+
+
+def _safe_extract(extractor: Callable[[str], list[str]], note: str) -> list[str]:
+    """Run the extractor and defensively bound its output before it is trusted."""
+    try:
+        out = extractor(note) or []
+    except Exception:  # noqa: BLE001 — a failed extraction yields nothing, never crashes
+        return []
+    if not isinstance(out, list):
+        return []
+    safe: list[str] = []
+    for label in out[:_MAX_EXTRACTED_LABELS]:
+        if isinstance(label, str) and 0 < len(label) <= _MAX_LABEL_LEN:
+            safe.append(label)
+    return safe
 
 
 def r010_non_disclosure(
@@ -584,6 +746,70 @@ def r014_ml_clean(sig: Signals) -> bool:
     if not scores:
         return True  # no ML signal present ⇒ nothing blocking on score grounds
     return all(v < C.ML_SCORE_CLEAN_MAX for v in scores.values() if isinstance(v, (int, float)))
+
+
+# ===========================================================================
+# R-M2 — LIFE cross-signal moral hazard (the differentiator; routes, never decides)
+# ===========================================================================
+def rm2_cross_signal(inp: ProposalInput, soft_flags: list[SoftFlag]) -> RuleResult:
+    """R-M2 (LIFE) — detect a COMBINATION of individually-benign signals that together
+    describe a fronting / proxy / early-claim pattern no single rule flags. Raises
+    `cross_signal_moral_hazard` for the judge to reason over; it does NOT decide (§1.1
+    grey-zone is rule-detected, LLM-resolved). Three patterns; ≥2 co-occurring signals
+    in a pattern fires it.
+
+    The signals here are each INNOCENT alone (a family SIM, a spouse paying premium),
+    which is exactly why this is the LLM's job: distinguishing the innocent combination
+    from the fronting one needs context, not a threshold (the §1.3 'LLM not rule' test).
+    """
+    sig = inp.signals
+    app = inp.application
+    product = app.product
+
+    # Only a LIFE concern (proxy/fronting on a life policy).
+    if not _is_life(product):
+        return RuleResult(rule_id="R-M2")
+
+    signals_hit: list[str] = []
+
+    # --- Fronting / proxy signals (each benign alone) ---
+    # 1. mobile holder-name mismatch (already surfaced by consistency_check)
+    if any(f.flag_type == "mobile_pan_mismatch" for f in soft_flags):
+        signals_hit.append("mobile holder-name mismatch")
+    # 2. premium paid by a third party (not self/spouse)
+    payer = (app.premium_payer or "").lower()
+    if payer and payer not in ("self", "spouse", ""):
+        signals_hit.append(f"premium paid by third party ({app.premium_payer})")
+    # 3. proxy nominee: nominee much older than a young applicant (reverse-dependency)
+    nominee = app.nominee or {}
+    rel = (nominee.get("relationship") or "").lower()
+    if rel in ("father", "mother", "parent") and app.applicant.age <= 35:
+        signals_hit.append(f"elderly {rel} nominee for a young applicant (reverse dependency)")
+    # 4. sudden large SA with no prior cover history
+    iib = sig.iib
+    no_prior = iib.available and (iib.num_policies or 0) == 0
+    large_sa = product.sum_assured >= 10_000_000  # ₹1cr+  # TODO(underwriting-manual)
+    if no_prior and large_sa:
+        signals_hit.append("sudden large sum-assured with no prior insurance history")
+    # 5. backdating requested (early-claim / age manipulation setup)
+    if app.backdating_requested is True:
+        signals_hit.append("backdating requested")
+
+    # ≥2 co-occurring signals → the pattern is worth the judge's attention.
+    if len(signals_hit) >= 2:  # TODO(underwriting-manual): pattern threshold
+        flag = _flag(
+            "cross_signal_moral_hazard", "R-M2", "R-M2-cross-signal",
+            "Individually-benign signals co-occur into a possible fronting/proxy/"
+            "early-claim pattern: " + "; ".join(signals_hit) +
+            " — no single rule flags this; routed to a human via the judge.",
+            severity=Severity.high,
+            cited=["signals.mobile_intel.holder_name", "application.premium_payer",
+                   "application.nominee", "signals.iib.num_policies"],
+            ctx={"signals": signals_hit},
+        )
+        return RuleResult(rule_id="R-M2", flags=[flag],
+                          score_inputs={"signal_count": len(signals_hit)})
+    return RuleResult(rule_id="R-M2", score_inputs={"signal_count": len(signals_hit)})
 
 
 # ===========================================================================
@@ -846,10 +1072,14 @@ def run_bre(
         return BreResult(outcome="POSTPONE", rule_results=results, reason_codes=[pp.reason_code])
 
     # --- Soft rules + consistency ---
+    financial = app.financial
     soft_results = [
         r005b_senior_medicals(age),
         r007_income_thin(sig, age, sum_insured),
         r008_thin_file(sig, sum_insured),
+        rf2_hlv_ceiling(sig, financial, age, sum_insured),   # LIFE: HLV ceiling
+        rf3_pan_aggregate(sig, financial, age, sum_insured),  # LIFE: PAN-aggregate cover
+        rm1_medical_grid(sig, app.product, age, sum_insured),  # LIFE: age×SA medical grid
         r009_loading(sig, age, health.bmi),
         r010_non_disclosure(sig, health, extractor),
         r011_waiting_period(sig, health),
@@ -866,6 +1096,13 @@ def run_bre(
     soft_flags: list[SoftFlag] = []
     for r in soft_results:
         soft_flags.extend(r.flags)
+
+    # R-M2 (LIFE cross-signal) runs LAST — it reads the soft flags the other rules
+    # produced (e.g. mobile_pan_mismatch from the consistency check) to detect a
+    # fronting/proxy COMBINATION. It routes (raises a flag), never decides.
+    rm2 = rm2_cross_signal(inp, soft_flags)
+    results.append(rm2)
+    soft_flags.extend(rm2.flags)
 
     r009 = next(r for r in soft_results if r.rule_id == "R-009")
     beyond = [r for r in soft_results if r.beyond_matrix]  # R-005b / R-009 / R-017 step-ups

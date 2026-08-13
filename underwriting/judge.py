@@ -68,6 +68,15 @@ class GreyZoneJudge(dspy.Signature):
     category (income / medical / identity) applies, rule unresolvable_escalate
     rather than guessing benign.
 
+    A `cross_signal_moral_hazard` flag is special: it names a COMBINATION of
+    individually-benign facts (a mobile holder mismatch, a third-party premium payer,
+    an elderly nominee, a sudden large sum-assured) that together may describe a
+    fronting / proxy / early-claim pattern. Reason over the WHOLE combination, not
+    each fact alone. Rule benign_explained only if the combination has an innocent
+    explanation you can cite (e.g. a joint-family payer with a consistent address);
+    otherwise unresolvable_escalate -- a human underwriter must judge a suspected
+    fronting pattern. You never clear it just because each fact is individually fine.
+
     You never set a premium or loading number and never decide AML / sanctions /
     identity-fraud / eligibility -- those are decided by deterministic rules, not
     you. Your most severe possible ruling is unresolvable_escalate."""

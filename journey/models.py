@@ -98,8 +98,8 @@ class Consent(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     application_id: int = Field(foreign_key="application.id", index=True)
-    type: str                                # dpdp | aadhaar_ekyc | account_aggregator | abha
-    framework: Optional[str] = None          # DPDP_Act | Aadhaar_Act | RBI_AA | ABDM
+    type: str                                # dpdp | aadhaar_ekyc | bank_statement_upload | abha
+    framework: Optional[str] = None          # DPDP_Act | Aadhaar_Act | ABDM
     granted: bool = False
     created_at: datetime = Field(default_factory=_now)
 

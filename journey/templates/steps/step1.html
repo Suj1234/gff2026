@@ -1,0 +1,81 @@
+<section class="card">
+  <h1>Identity &amp; KYC</h1>
+  <p style="color:var(--text-2);margin-bottom:var(--sp-5);max-width:60ch">
+    Profile prefilled from the mobile number. Confirm identity, add email, and verify Aadhaar via DigiLocker.
+  </p>
+
+  {% set pv = signals.pan_verify %}
+  {% set has_profile = applicant.name and pv and pv.pan %}
+
+  {% if has_profile %}
+  {# ---- Prefilled from Mobile->PAN — read-only confirm ---- #}
+  <h2 style="font-size:var(--fs-h2)">Profile
+    {% if pv.pan_status == "valid" %}<span class="tag ok">PAN Verified</span>
+    {% elif pv.pan_status == "invalid" %}<span class="tag bad">PAN Invalid</span>
+    {% else %}<span class="tag warn">PAN entered · not KYC-verified</span>{% endif %}
+  </h2>
+  <div class="grid2">
+    <div class="kv"><span class="k">Name</span><span class="v">{{ applicant.name }}</span></div>
+    <div class="kv"><span class="k">Date of birth</span><span class="v">{{ applicant.dob or "—" }}</span></div>
+    <div class="kv"><span class="k">Gender</span><span class="v">{{ applicant.gender or "—" }}</span></div>
+    <div class="kv"><span class="k">PAN</span><span class="v mono">{{ signals.pan_verify.pan }}</span></div>
+    <div class="kv" style="grid-column:1/-1"><span class="k">Address</span><span class="v">{{ applicant.address or "—" }}</span></div>
+    <div class="kv"><span class="k">Pincode</span><span class="v mono">{{ applicant.pincode or "—" }}</span></div>
+    {% set ported = signals.mobile_intel and signals.mobile_intel.ported_recently %}
+    <div class="kv {{ 'attn-warn' if ported }}"><span class="k">Mobile intel</span><span class="v">
+      {{ signals.mobile_intel.provider if signals.mobile_intel else "—" }}
+      {% if ported %}<span class="tag warn">Ported</span>{% endif %}
+    </span></div>
+  </div>
+
+  {% else %}
+  {# ---- Prefill empty/unavailable — manual entry / PAN fallback ---- #}
+  <h2 style="font-size:var(--fs-h2)">Profile <span class="tag warn">Prefill unavailable</span></h2>
+  <p style="color:var(--text-2);margin-bottom:var(--sp-3)">
+    The mobile-to-PAN service didn't return a profile. Retry, verify via DigiLocker (fills these), or enter manually.
+    <button class="btn btn-secondary" id="retry-prefill" style="margin-left:var(--sp-2)">↻ Retry prefill</button>
+  </p>
+  <div class="grid2">
+    <div class="field"><label>Name</label><input class="input" id="f-name" value="{{ applicant.name or '' }}"></div>
+    <div class="field"><label>Date of birth (YYYY-MM-DD)</label><input class="input" id="f-dob" value="{{ applicant.dob or '' }}"></div>
+    <div class="field"><label>Gender</label>
+      <select class="input" id="f-gender">
+        <option value="">—</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option>
+      </select></div>
+    <div class="field"><label>PAN</label><input class="input mono" id="f-pan" maxlength="10" placeholder="ABCDE1234F" value="{{ signals.pan_verify.pan if signals.pan_verify else '' }}"></div>
+    <div class="field"><label>Pincode</label><input class="input mono" id="f-pincode" maxlength="6" value="{{ applicant.pincode or '' }}"></div>
+    <div class="field" style="align-self:end"><button class="btn btn-primary" id="save-identity">Save identity</button></div>
+  </div>
+  <span class="msg" id="identity-msg"></span>
+  {% endif %}
+
+  {# ---- Email ---- #}
+  <h2 style="font-size:var(--fs-h2)">Email</h2>
+  <div class="kv" style="max-width:none">
+    <label for="email" class="k" style="margin-bottom:var(--sp-2)">Email address (fraud &amp; contactability check)</label>
+    <div style="display:flex;gap:var(--sp-2)">
+      <input class="input" id="email" type="email" placeholder="applicant@email.com"
+             value="{{ signals.email_intel.email if signals.email_intel else '' }}">
+      <button class="btn btn-secondary" id="save-email">Save</button>
+    </div>
+    <span class="msg" id="email-msg"></span>
+  </div>
+
+  {# ---- Aadhaar via DigiLocker ---- #}
+  <h2 style="font-size:var(--fs-h2)">Aadhaar e-KYC (DigiLocker)</h2>
+  {% if signals.aadhaar_ekyc and signals.aadhaar_ekyc.status == "available" %}
+    <div class="kv" style="background:var(--ok-tint);border-color:var(--ok)">
+      <span class="k">Aadhaar verified via DigiLocker</span>
+      <span class="v">{{ signals.aadhaar_ekyc.name or applicant.name }} — consent captured (Aadhaar Act)</span>
+    </div>
+  {% else %}
+    {% if qs.aadhaar == "error" %}<p class="msg err">DigiLocker verification failed — retry.</p>{% endif %}
+    <p style="color:var(--text-2);margin-bottom:var(--sp-3)">
+      Fetches verified name / DOB / gender / address from Aadhaar. No Aadhaar number is stored (DPDP-compliant).
+    </p>
+    <a class="btn btn-primary" href="/api/journey/digilocker/start/{{ app.id }}">Verify via DigiLocker →</a>
+  {% endif %}
+
+  <input type="hidden" id="app-id" value="{{ app.id }}">
+</section>
+<script src="/journey/static/step1.js"></script>

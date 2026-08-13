@@ -1,0 +1,54 @@
+{
+  "_note": "LIFE clean term case. Term product, age 34, SA 25L (grid → no medical needed), income covers SA, HLV present and not exceeded, no in-force cover. All gates pass, zero soft flags. Expected: ISSUE (row 6).",
+  "input": {
+    "proposal_id": "LIFE-CLEAN-001",
+    "meta": { "channel": "agent_portal", "insurer": "Acme Life", "persona": "salaried_term" },
+    "application": {
+      "applicant": {
+        "name": "Arjun Mehta",
+        "dob": "1992-05-10",
+        "gender": "male",
+        "age": 34,
+        "marital_status": "married",
+        "address": "45 Residency Road, Bengaluru, 560025",
+        "pincode": "560025"
+      },
+      "occupation": { "declared_type": "salaried", "declared_occupation": "product_manager", "employer_declared": "Acme Software Pvt Ltd" },
+      "product": { "type": "term_life", "plan_variant": "term", "sum_assured": 2500000, "premium": 9000, "tenure_years": 30, "premium_payment_term": 30, "payment_mode": "annual" },
+      "financial": { "declared_annual_income": 1800000, "source_of_funds": "salary", "human_life_value": 40000000, "dependents_count": 2 },
+      "nominee": { "name": "Priya Mehta", "relationship": "spouse" },
+      "premium_payer": "self",
+      "backdating_requested": false,
+      "declared_pep": false,
+      "health_declaration": { "height_cm": 178, "weight_kg": 74, "bmi": 23.4, "conditions": [], "tobacco": false, "alcohol": false, "drugs": false, "past_medical_history": "none", "ongoing_medication": "none", "family_history": [] }
+    },
+    "consents": [
+      { "type": "general_application", "framework": "DPDP_2023", "granted": true },
+      { "type": "aadhaar_ekyc", "framework": "Aadhaar_Act", "granted": true }
+    ],
+    "signals": {
+      "mobile_intel": { "status": "available", "number": "+91-9880011223", "provider": "Jio", "vintage_months": 72, "ported_recently": false, "on_revocation_list": false, "holder_name": "Arjun Mehta" },
+      "pan_verify": { "status": "available", "pan": "AMKPM7788L", "pan_status": "valid", "name": "Arjun Mehta", "dob": "1992-05-10", "aadhaar_seeded": true, "address": "45 Residency Road, Bengaluru, 560025" },
+      "aadhaar_ekyc": { "status": "available", "name": "Arjun Mehta", "dob": "1992-05-10", "address": "45 Residency Road, Bengaluru, 560025", "photo": true },
+      "ckyc": { "status": "available", "existing_record": true, "name": "Arjun Mehta", "dob": "1992-05-10", "address": "45 Residency Road, Bengaluru, 560025" },
+      "liveness_facematch": { "status": "available", "liveness_pass": true, "liveness_score": 0.95, "face_match_score": 0.98, "deepfake_flag": false },
+      "epfo": { "status": "available", "name": "Arjun Mehta", "employer": "Acme Software Pvt Ltd", "tenure_years": 6, "contribution_band": "16-18L", "epf_deducted_last_45d": true },
+      "itr": { "status": "available", "name": "Arjun Mehta", "latest_total_taxable_income": 1800000 },
+      "account_aggregator": { "status": "available", "name": "Arjun Mehta", "imputed_annual_income": 1795000, "income_source": "gst_itr", "avg_monthly_balance": 300000, "expense_to_income": 0.32 },
+      "occupation_hazard": { "status": "available", "hazard_class": "non_hazardous" },
+      "geography": { "status": "available", "pincode": "560025", "morbidity_index": 0.2, "fraud_hotspot_flag": false },
+      "velocity_graph": { "status": "available", "velocity_score": 0.04, "shared_device_count": 0, "cross_product_count_45d": 0 },
+      "pep_sanctions": { "status": "available", "applicant_hit": false, "nominee_hit": false, "lists_checked": ["UN", "OFAC", "RBI_caution"] },
+      "iib": { "status": "available", "num_policies": 0, "num_insurers": 0, "life_inforce_sa": 0, "total_inforce_sa": 0, "claim_match": false },
+      "ml_scores": { "fraud_score": 0.06, "anomaly_score": 0.08, "graph_score": 0.04 }
+    },
+    "documents": [],
+    "follow_up_observations": {}
+  },
+  "expected": {
+    "decision": "ISSUE",
+    "expected_outcome": "CLEAN",
+    "expected_bre_outcome": "CLEAN",
+    "expected_rulings": []
+  }
+}

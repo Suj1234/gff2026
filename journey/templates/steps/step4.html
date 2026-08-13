@@ -1,0 +1,89 @@
+<section class="card">
+  <h1>Health Declaration</h1>
+  <p style="color:var(--text-2);margin-bottom:var(--sp-4)">
+    Six screeners first; condition details appear only if the applicant answers Yes. Vitals from
+    the face scan and any ABHA records feed the agent's non-disclosure &amp; loading checks.
+  </p>
+
+  {% set hd = app.bundle.get("application", {}).get("health_declaration", {}) %}
+
+  {# ---- 1. Screeners ---- #}
+  <h2 style="font-size:var(--fs-h2);margin-bottom:var(--sp-3)">Screeners</h2>
+  <div id="screeners" style="display:flex;flex-direction:column;gap:var(--sp-2)">
+    {% for s in [
+      "Any symptom lasting more than 5 days?",
+      "Any diagnostic test advised recently?",
+      "On any medication for more than 7 days?",
+      "Any surgery advised or planned?",
+      "Ever diagnosed with heart / cancer / diabetes / hypertension / hepatitis / mental illness / epilepsy / respiratory / kidney / HIV?",
+      "Any prior policy declined, loaded or postponed?"
+    ] %}
+      <label class="consent-row" style="padding:var(--sp-2);border:1px solid var(--line);border-radius:var(--radius-sm)">
+        <input type="checkbox" class="screener"> <span style="color:var(--text)">{{ s }}</span>
+      </label>
+    {% endfor %}
+  </div>
+
+  {# ---- 2. Conditions (revealed on any Yes) ---- #}
+  <div id="conditions-block" hidden>
+    <h2 style="font-size:var(--fs-h2);margin:var(--sp-5) 0 var(--sp-3)">Conditions</h2>
+    <div class="grid2" id="conditions">
+      {% set chosen = hd.conditions or [] %}
+      {% for c in ["diabetes","hypertension","heart_disease","thyroid","asthma","cancer","hepatitis","kidney_disease","mental_health","other"] %}
+        <label class="consent-row" style="padding:var(--sp-2);border:1px solid var(--line);border-radius:var(--radius-sm)">
+          <input type="checkbox" class="cond" value="{{ c }}" {{ 'checked' if c in chosen else '' }}>
+          <span style="color:var(--text)">{{ c.replace('_',' ')|title }}</span>
+        </label>
+      {% endfor %}
+    </div>
+    <div class="field" style="margin-top:var(--sp-3)">
+      <label>Ongoing medication / notes</label>
+      <input class="input" id="h-med" value="{{ hd.ongoing_medication or '' }}">
+    </div>
+  </div>
+
+  {# ---- 3. Vitals & lifestyle (always) ---- #}
+  <h2 style="font-size:var(--fs-h2);margin:var(--sp-5) 0 var(--sp-3)">Vitals &amp; lifestyle</h2>
+  <div class="grid2">
+    <div class="field"><label>Height (cm)</label><input class="input mono" id="h-height" inputmode="numeric" value="{{ hd.height_cm or '' }}"></div>
+    <div class="field"><label>Weight (kg)</label><input class="input mono" id="h-weight" inputmode="numeric" value="{{ hd.weight_kg or '' }}"></div>
+    <div class="field"><label>BMI (derived)</label><input class="input mono" id="h-bmi" value="{{ hd.bmi or '' }}" disabled></div>
+    <div class="field"><label>Family history (first-degree)</label><input class="input" id="h-family" placeholder="e.g. diabetes, cardiac" value="{{ hd.family_history|join(', ') if hd.family_history else '' }}"></div>
+  </div>
+  <div style="display:flex;gap:var(--sp-5);margin-top:var(--sp-3)">
+    <label class="consent-row"><input type="checkbox" id="h-tobacco" {{ 'checked' if hd.tobacco else '' }}><span>Tobacco</span></label>
+    <label class="consent-row"><input type="checkbox" id="h-alcohol" {{ 'checked' if hd.alcohol else '' }}><span>Alcohol</span></label>
+    <label class="consent-row"><input type="checkbox" id="h-drugs" {{ 'checked' if hd.drugs else '' }}><span>Recreational drugs</span></label>
+  </div>
+  <button class="btn btn-secondary" id="save-health" style="margin-top:var(--sp-4)">Save health declaration</button>
+  <span class="msg" id="health-msg"></span>
+
+  {# ---- 4. Face scan ---- #}
+  <h2 style="font-size:var(--fs-h2);margin:var(--sp-6) 0 var(--sp-3)">Face scan (NuralX — contactless vitals)</h2>
+  {% if signals.rppg_scan and signals.rppg_scan.status == "available" %}
+    <div class="kv" style="background:var(--ok-tint);border-color:var(--ok)">
+      <span class="k">Scan complete</span>
+      <span class="v">HR {{ signals.rppg_scan.vitals.heart_rate }} · SpO₂ {{ signals.rppg_scan.vitals.spo2 }} · BP {{ signals.rppg_scan.vitals.bp }}
+        {% if signals.liveness_facematch and signals.liveness_facematch.liveness_pass %}<span class="tag ok">Liveness pass</span>{% endif %}
+      </span>
+    </div>
+  {% else %}
+    <p style="color:var(--text-2);margin-bottom:var(--sp-3)">Estimates only — feed step-up triage, never a standalone decision (vendor disclaimer).</p>
+    <button class="btn btn-primary" id="start-scan">Start face scan →</button>
+    <span class="msg" id="scan-msg"></span>
+  {% endif %}
+
+  {# ---- 5. ABHA ---- #}
+  <h2 style="font-size:var(--fs-h2);margin:var(--sp-6) 0 var(--sp-3)">ABHA health records</h2>
+  {% if signals.abha_health_records and signals.abha_health_records.status == "available" %}
+    <div class="kv"><span class="k">ABHA records</span>
+      <span class="v">{{ signals.abha_health_records.diagnoses|join(', ') if signals.abha_health_records.diagnoses else 'No recorded diagnoses' }}</span></div>
+  {% else %}
+    <p style="color:var(--text-2);margin-bottom:var(--sp-3)">Fetches linked diagnoses/prescriptions (ABDM consent recorded on fetch). Used for non-disclosure check (R-010).</p>
+    <button class="btn btn-primary" id="fetch-abha">Fetch ABHA records →</button>
+    <span class="msg" id="abha-msg"></span>
+  {% endif %}
+
+  <input type="hidden" id="app-id" value="{{ app.id }}">
+</section>
+<script src="/journey/static/step4.js"></script>
