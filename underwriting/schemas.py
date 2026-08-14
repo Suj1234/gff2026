@@ -82,8 +82,7 @@ class Product(BaseModel):
     tenure_years: Optional[int] = 1
     payment_mode: Optional[str] = None
     # LIFE fields (optional; ride on the model, named so rules can read them):
-    plan_variant: Optional[str] = None          # term | whole_life | ulip
-    premium_payment_term: Optional[int] = None  # PPT can differ from tenure in life
+    plan_variant: Optional[str] = None          # term | whole_life | ulip (read: life-gating)
 
 
 class FinancialDeclared(BaseModel):
@@ -91,11 +90,11 @@ class FinancialDeclared(BaseModel):
     declared_annual_income: Optional[int] = None
     purpose_of_cover: Optional[str] = None
     source_of_funds: Optional[str] = None
-    # LIFE financial-underwriting inputs (R-F2 HLV ceiling):
+    # LIFE financial-underwriting input (R-F2 HLV ceiling). HLV is read pre-computed;
+    # the engine does not compute it from net-worth/liabilities/dependents, so those
+    # raw inputs are omitted until a rule consumes them (extra="allow" carries them if
+    # a bundle sends them anyway).
     human_life_value: Optional[int] = None   # HLV if computed upstream
-    net_worth: Optional[int] = None
-    liabilities: Optional[int] = None
-    dependents_count: Optional[int] = None
 
 
 class HealthDeclaration(BaseModel):

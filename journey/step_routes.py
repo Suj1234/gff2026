@@ -674,6 +674,35 @@ def _group_has_data(group_key: str, bundle: dict) -> bool:
     return False
 
 
+@router.get("/app/{app_id}")
+def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -> dict:
+    """Read-only snapshot for the React console: the fetched applicant + KYC signals so
+    the center panel can render pre-filled Step-1 data. No mutation, session-gated."""
+    app = _require_app(request, app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+    bundle = dict(app.bundle)
+    application = bundle.get("application", {}) or {}
+    signals = bundle.get("signals", {}) or {}
+    return {
+        "success": True,
+        "application_number": app.application_number,
+        "current_step": app.current_step,
+        "status": app.status,
+        "applicant": application.get("applicant", {}) or {},
+        "signals": {
+            "pan_verify": signals.get("pan_verify", {}) or {},
+            "mobile_intel": signals.get("mobile_intel", {}) or {},
+            "epfo": signals.get("epfo", {}) or {},
+            "gst": signals.get("gst", {}) or {},
+            "litigation_fir": signals.get("litigation_fir", {}) or {},
+            "mca_director": signals.get("mca_director", {}) or {},
+            "email_intel": signals.get("email_intel", {}) or {},
+            "aadhaar_ekyc": signals.get("aadhaar_ekyc", {}) or {},
+        },
+    }
+
+
 @router.get("/rail/{app_id}")
 def rail(app_id: int, request: Request, step: int = 5,
          db: Session = Depends(get_session)) -> dict:

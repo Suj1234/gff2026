@@ -186,8 +186,14 @@ def run(inp: ProposalInput, gather: Optional[EvidenceGatherer] = None) -> Pipeli
 
 
 def _has_unstructured_notes(inp: ProposalInput) -> bool:
+    """True if any RAW free-text medical source needs the LLM extractor (§4.2).
+    Covers ABHA unstructured notes AND the LIFE Aps (attending physician statement) —
+    both are free-text the deterministic pass can't read; either one triggers the
+    extractor re-run on a grey-zone case."""
     a = inp.signals.abha_health_records
-    return a.available and bool(getattr(a, "unstructured_notes", None))
+    aps = inp.signals.aps
+    return (a.available and bool(getattr(a, "unstructured_notes", None))) or \
+           (aps.available and bool(getattr(aps, "notes", None)))
 
 
 def _run_meta(baseline: int) -> dict:

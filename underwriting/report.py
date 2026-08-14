@@ -135,16 +135,39 @@ def _sections(breakdown) -> dict[str, SectionEvaluation]:
     return out
 
 
-def _risk_and_fraud_verdict(bre, risk: RiskScores) -> dict[str, Any]:
-    """The narrative verdict block (§8). Built from the flags + scores we produced."""
+# Decisions that route to a human / are adverse — the Safety band should not read
+# "Low Risk" next to these without a note explaining the band is advisory.
+_NON_ISSUE_VERDICTS = {"REFER", "DECLINE", "STEP_UP", "POSTPONE"}
+
+
+def _risk_and_fraud_verdict(bre, risk: RiskScores, safety=None, decision=None) -> dict[str, Any]:
+    """The narrative verdict block (§8). Built from the flags + scores we produced.
+
+    Adds a `band_vs_decision_note` when the Safety band reads safer than the decision
+    implies (e.g. "Low Risk" headline on a REFER driven by low-weighted moral-hazard
+    flags). This is the documented "Safety band ≠ decision" principle made VISIBLE
+    (JOURNEY_PLAN L-A2 option 1) — it does NOT change any weight or the decision; it
+    stops the report narrative contradicting the verdict. Weight re-calibration stays
+    deferred to labeled data (D-5).
+    """
     flag_types = {f.flag_type for f in bre.soft_flags}
-    return {
+    out = {
         "risk_summary": _join_reasons(bre, ("R-009", "R-010", "R-017")) or "No elevated clinical risk flags.",
-        "fraud_summary": _join_reasons(bre, ("R-001", "R-002", "R-003", "R-013"))
+        "fraud_summary": _join_reasons(bre, ("R-001", "R-002", "R-003", "R-013", "R-M2"))
         or "No synthetic-identity or tampering signal.",
         "non_disclosure": "non_disclosure_signal" in flag_types,
         "confidence_band": risk.composite_band or "low",
     }
+    if safety is not None and decision is not None:
+        verdict = getattr(decision, "verdict", None)
+        band = getattr(safety, "band", "")
+        if verdict in _NON_ISSUE_VERDICTS and band == "Low Risk":
+            out["band_vs_decision_note"] = (
+                f"Safety Score {getattr(safety, 'value', '')} ({band}) is advisory and does NOT "
+                f"drive the decision — this case is {verdict} on specific flags/gates "
+                f"independent of the composite score (Safety band ≠ decision)."
+            )
+    return out
 
 
 def _join_reasons(bre, rule_prefixes: tuple[str, ...]) -> str:
@@ -235,7 +258,7 @@ def build_report(result) -> ReportOutput:
         sections=_sections(result.scoring_breakdown),
         risk_scores=risk,
         bre_result=bre,
-        risk_and_fraud_verdict=_risk_and_fraud_verdict(bre, risk),
+        risk_and_fraud_verdict=_risk_and_fraud_verdict(bre, risk, safety, decision),
         decision=decision,
         cited_evidence_chain=_cited_chain(result.rulings),
         run_metadata=metadata,

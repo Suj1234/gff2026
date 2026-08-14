@@ -97,6 +97,16 @@ def test_fixture_end_to_end_full_report(name, expected_verdict):
     assert report.bre_result is not None
     assert report.decision.reason_summary, "every decision carries a human reason (§11)"
 
+    # Band-vs-decision banner (L-A2): a REFER/DECLINE/STEP_UP/POSTPONE whose Safety band
+    # still reads "Low Risk" must carry the advisory note so the narrative doesn't
+    # contradict the verdict; a clean ISSUE at Low Risk must NOT carry it.
+    _note = report.risk_and_fraud_verdict.get("band_vs_decision_note")
+    if report.decision.verdict in {"REFER", "DECLINE", "STEP_UP", "POSTPONE"} \
+            and report.safety_score.band == "Low Risk":
+        assert _note, f"{name}: adverse verdict at Low band must carry band_vs_decision_note"
+    if report.decision.verdict == "ISSUE":
+        assert not _note, f"{name}: a clean ISSUE must not carry the band-mismatch note"
+
     # 4. Version stamps on every output (§11).
     m = report.run_metadata
     assert m.rules_version == "v1"
