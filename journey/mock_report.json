@@ -1,0 +1,107 @@
+{
+  "report_meta": {
+    "applicant_name": "Rohit Kishan Sharma",
+    "application_no": "110L156V03",
+    "product_name": "Secure Insure",
+    "sum_assured": 10000000,
+    "premium": 31000,
+    "report_date": "2026-06-03",
+    "profile": { "gender": "male", "age": 32, "marital_status": "married",
+                 "education": "under_graduate", "location": "Mumbai-400032",
+                 "occupation_type": "salaried_and_self_employed" }
+  },
+  "safety_score": {
+    "value": 65,
+    "band": "High Risk",
+    "scale": "0-100, higher = safer",
+    "method": "weighted_sum_of_per_source_sub_scores",
+    "bands": { "low_risk": "85-100", "moderate_risk": "70-84", "high_risk": "0-69" },
+    "_note": "weights and sub_scores are illustrative placeholders — calibrate against the underwriting manual + labeled outcomes"
+  },
+  "scoring_breakdown": [
+    { "source_group": "identity_kyc",        "weight": 0.12, "risk_sub_score": 70, "contribution": 8.40, "why": "facematch/liveness ok, but name+DOB+address mismatched" },
+    { "source_group": "contactability",      "weight": 0.04, "risk_sub_score": 90, "contribution": 3.60, "why": "email 7.3y old, low spam; mobile holder-name mismatch" },
+    { "source_group": "occupation_employer", "weight": 0.10, "risk_sub_score": 60, "contribution": 6.00, "why": "EPF ok, but MCA director = defaulter, GST delay" },
+    { "source_group": "financial",           "weight": 0.16, "risk_sub_score": 55, "contribution": 8.80, "why": "declared 20L vs imputed 18.5L, cash-deposit>salary, luxury-vehicle triggers" },
+    { "source_group": "lifestyle",           "weight": 0.08, "risk_sub_score": 45, "contribution": 3.60, "why": "smoking, alcohol, gambling, adventurous activity spends" },
+    { "source_group": "medical",             "weight": 0.22, "risk_sub_score": 60, "contribution": 13.20, "why": "dyslipidemia, hypothyroid, anaemia, past polytrauma, misrepresentation" },
+    { "source_group": "velocity_graph",      "weight": 0.06, "risk_sub_score": 80, "contribution": 4.80, "why": "no significant cover-stacking pattern" },
+    { "source_group": "geography",           "weight": 0.03, "risk_sub_score": 85, "contribution": 2.55, "why": "pincode not a fraud hotspot" },
+    { "source_group": "litigation_fir",      "weight": 0.05, "risk_sub_score": 70, "contribution": 3.50, "why": "1 criminal + 1 civil, probable-match medium confidence" },
+    { "source_group": "fraud_check",         "weight": 0.08, "risk_sub_score": 60, "contribution": 4.80, "why": "no tampering, but income-source + personal-detail inconsistency" },
+    { "source_group": "insurance_portfolio", "weight": 0.06, "risk_sub_score": 80, "contribution": 4.80, "why": "2 existing health policies, IIB claim match" }
+  ],
+  "scoring_total": { "sum_of_weights": 1.00, "computed_safety_score": 65.0 },
+  "signals": {
+    "mobile_vintage":     { "vintage_months": 19, "ported_recently": false, "consent": "none", "consumed_by": ["BRE","ML"], "result": "clean" },
+    "mobile_fraud":       { "on_revocation_list": false, "consent": "none", "consumed_by": ["BRE"], "result": "R-001 pass" },
+    "device_fingerprint": { "emulator_flag": false, "device_reuse_count": 0, "consent": "none", "consumed_by": ["ML"], "result": "clean" },
+    "mobile_to_pan":      { "match_confidence": 0.61, "consent": "none", "consumed_by": ["prefill"], "result": "weak_link" },
+    "pan_verify":         { "pan": "FWIPS4634L", "name_match": false, "dob_match": false, "address_match": false, "aadhaar_seeded": true, "consent": "none", "consumed_by": ["BRE"], "result": "R-002 pass, 3 soft mismatches" },
+    "aadhaar_ekyc":       { "dob_verified": true, "address_verified": true, "photo": true, "consent": "aadhaar_act", "consumed_by": ["BRE"], "result": "verified" },
+    "ckyc":               { "existing_record": true, "address_match": false, "consent": "none", "consumed_by": ["BRE"], "result": "ckyc_mismatch flag" },
+    "liveness_facematch": { "liveness_pass": true, "face_match_score": 0.9597, "liveness_score": 0.8088, "deepfake_flag": false, "consent": "biometric", "consumed_by": ["BRE"], "result": "R-003 pass" },
+    "epfo":               { "employer": "Perfios Software Solutions Private Limited", "date_of_joining": "2023-05", "tenure_years": 2, "epf_deducted_45d": true, "consent": "none", "consumed_by": ["BRE","ML"], "result": "verified" },
+    "gst_itr":            { "gstin": "27***********A", "entity": "Roko Brokers", "turnover_slab": "40L-1.5Cr", "gst_transaction_delay": true, "itr_taxable_income": 1995000, "filing_consistency": "delayed", "consent": "none", "consumed_by": ["BRE","ML"], "result": "gst_delay flag" },
+    "account_aggregator": { "imputed_annual_income": 1848000, "avg_monthly_balance": 80000, "expense_to_income": 0.455, "salary_credit_monthly": 142927, "consent": "aa_artifact", "consumed_by": ["BRE","ML"], "result": "income_mismatch flag" },
+    "mca_director_legal": { "din": "10312312", "din_status": "approved", "director_default": true, "entity": "Smart Workers Private Limited", "consent": "none", "consumed_by": ["BRE","ML"], "result": "mca_defaulter flag" },
+    "geography":          { "morbidity_index": 0.38, "fraud_hotspot_flag": false, "hospital_density": "high", "consent": "none", "consumed_by": ["ML"], "result": "clean" },
+    "velocity_graph":     { "velocity_score": 0.31, "shared_device_count": 0, "related_proposals": [], "consent": "none", "consumed_by": ["ML"], "result": "clean" },
+    "occupation_hazard":  { "hazard_class": "non_hazardous", "consent": "none", "consumed_by": ["BRE"], "result": "clean" },
+    "abha_health_records":{ "diagnoses": ["dyslipidemia","hypothyroidism","iron_deficiency_anaemia"], "prescriptions": ["thyroid_med","statin","antihypertensive"], "consent": "hie_cm", "consumed_by": ["agent"], "result": "non_disclosure flag" },
+    "rppg_scan":          { "heart_rate": 72, "respiratory_rate": 16, "hrv_ms": 42, "stress_index": 0.38, "bp": "118/76", "hemoglobin": 14.1, "spo2": 98, "consent": "explicit", "consumed_by": ["agent"], "result": "step_up_only" }
+  },
+  "sections": {
+    "identity_checks":    { "risk_level": "Moderate", "facematch_pct": 95.97, "liveness_pct": 80.88, "kyc_verified": true, "pan_aadhaar_linked": true, "name_match": false, "dob_match": false, "address_match": false, "pep": false, "compliance_206ab": true },
+    "contactability":     { "risk_level": "Low", "mobile": { "number": "+91-8710830213", "status": "active", "provider": "Jio", "connection": "prepaid", "sim_activation": "2012-02", "holder_name": "Kishan V Sharma", "holder_mismatch": true }, "email": { "id": "rohit.s@gmail.com", "created": "2008-04-22", "spam": false, "fraud_risk": "very_low" } },
+    "occupation_self_employed": { "risk_level": "Moderate", "entity": "Roko Brokers", "type": "proprietorship", "business_type": "agency_services", "registered": "2018-10-01", "turnover_slab": "40L-1.5Cr", "gst_transaction_delay": true, "mca_director_default": true },
+    "financial_evaluation": { "risk_level": "High", "declared_income": 2000000, "imputed_income_bsa": 1848000, "salary_slip_income": 1664000, "itr_income": 1995000, "credit_score": 722, "total_outstanding": 3600000, "vehicle_idv": 1596000, "triggers": [ { "finding": "irregular_salary_credits", "category": "behavioural", "risk": "high", "source": "bank_statement" }, { "finding": "cash_deposit_gt_max_salary", "category": "transactional", "risk": "high", "source": "bank_statement" }, { "finding": "luxury_vehicle_vs_income", "category": "authenticity", "risk": "medium", "source": "bank_statement" }, { "finding": "income_declared_vs_bsa_mismatch", "category": "authenticity", "risk": "high", "source": "bank_statement" } ] },
+    "lifestyle_analysis": { "risk_level": "High", "risk_spends_pct": 5.5, "wellness_spends_pct": 0.0, "indicators": [ { "indicator": "smoking_pan_shop", "frequency": "weekly", "severity": "high" }, { "indicator": "gambling", "frequency": "occasional", "severity": "high" }, { "indicator": "alcohol", "frequency": "occasional", "severity": "low" }, { "indicator": "adventurous_activity", "frequency": "occasional", "severity": "moderate" } ] },
+    "medical_evaluation": { "risk_level": "High", "bmi": 30, "bp": "118/76", "conditions": [ { "condition": "dyslipidemia", "severity": "moderate" }, { "condition": "hypothyroidism", "severity": "moderate" }, { "condition": "iron_deficiency_anaemia", "severity": "moderate" }, { "condition": "chronic_systemic_inflammation", "severity": "moderate" }, { "condition": "historical_polytrauma", "severity": "moderate" } ], "lab": [ { "test": "hemoglobin", "result": 11.8, "ref": "13.5-17.5", "severity": "low" }, { "test": "TSH", "result": 5.1, "ref": "0.4-4.5", "severity": "high" }, { "test": "total_cholesterol", "result": 228, "ref": "<200", "severity": "high" }, { "test": "fasting_glucose", "result": 102, "ref": "70-99", "severity": "high" } ], "questionnaire_declared_conditions": "none", "misrepresentation_flag": true },
+    "consistency_check":  { "risk_level": "High", "name_match": false, "dob_match": false, "address_match": false, "sources_checked": ["pan","proposal_form","mobile","bank_statement","salary_slip","itr","bureau","medical_exam","vehicle"] },
+    "litigation_fir":     { "risk_level": "Moderate", "total_cases": 2, "criminal_cases": 1, "firs": 0, "confidence": "medium_probable_match", "cases": [ { "type": "succession", "civil_criminal": "civil", "severity": "medium", "status": "disposed" }, { "type": "warrant_summons", "civil_criminal": "criminal", "severity": "high", "status": "disposed" } ] },
+    "fraud_check":        { "risk_level": "Moderate", "red_flags": 0, "yellow_flags": 2, "green_flags": 1, "document_tampering": false, "income_source_mismatch": true, "personal_detail_inconsistency": true },
+    "insurance_portfolio_iib": { "existing_policies": [ { "type": "health", "insurer": "HDFC ERGO", "premium": 3000, "frequency": "monthly", "source": "bank_statement" }, { "type": "health", "insurer": "ICICI Lombard", "premium": 1200, "frequency": "yearly", "source": "bank_statement" } ], "iib": { "claim_match": true, "num_policies": 2, "num_insurers": 2 } }
+  },
+  "risk_scores": {
+    "fraud_score": 0.71, "anomaly_score": 0.66, "graph_score": 0.30,
+    "composite_band": "high",
+    "shap": { "income_declared_vs_bsa_mismatch": 0.22, "medical_misrepresentation": 0.19, "identity_field_mismatch": 0.14, "mca_director_default": 0.11 }
+  },
+  "bre_result": {
+    "outcome": "GREY-ZONE",
+    "ambiguous_flags": [
+      { "flag_id": "flg_001", "flag_type": "income_thin_file", "related_rule": "R-007" },
+      { "flag_id": "flg_002", "flag_type": "non_disclosure_signal", "related_rule": "R-010" },
+      { "flag_id": "flg_003", "flag_type": "identity_mismatch", "related_rule": "R-015" }
+    ]
+  },
+  "risk_and_fraud_verdict": {
+    "risk_summary": "Elevated long-term morbidity (dyslipidemia + hypothyroid + past polytrauma) plus high-risk lifestyle.",
+    "fraud_summary": "No synthetic-identity fraud; income authenticity and identity-field mismatches present.",
+    "non_disclosure": "Declared 'no medical history' but ABHA/lab evidence shows multiple active conditions.",
+    "confidence_band": "high"
+  },
+  "decision": {
+    "verdict": "ISSUE_WITH_LOADING",
+    "loading_band": "40-60%",
+    "secondary_flag": "non_disclosure_review_recommended",
+    "reason_summary": "Under-rated risk vs declared: medical misrepresentation + lifestyle + income-authenticity triggers.",
+    "reason_codes": ["R-007-income", "R-009-loading", "R-010-nondisclosure", "medical_misrepresentation"]
+  },
+  "cited_evidence_chain": [
+    { "claim": "medical misrepresentation", "cited_source": "sections.medical_evaluation.misrepresentation_flag", "ruling": "needs_medical_check", "cycle": 1 },
+    { "claim": "income authenticity", "cited_source": "signals.account_aggregator.imputed_annual_income", "ruling": "needs_income_corroboration", "cycle": 1 }
+  ],
+  "run_metadata": {
+    "rules_version": "v1", "prompt_version": "v1", "model": "gemini-1.5-flash",
+    "per_stage": { "judge_cycle_1": { "input_tokens": 2400, "output_tokens": 380, "total_cost_usd": 0.00048 } },
+    "total_cost_usd": 0.00048, "latency_seconds": 2.7,
+    "tags": ["NON_DISCLOSURE", "INCOME_AUTHENTICITY", "LOADING_APPLIED"]
+  },
+  "audit_log": [
+    { "step": "bre",           "actor": "system", "timestamp": "2026-06-03T10:00:01Z", "detail": "3 ambiguous flags -> GREY-ZONE" },
+    { "step": "judge_cycle_1", "actor": "agent",  "timestamp": "2026-06-03T10:00:04Z", "detail": "needs_medical_check + needs_income_corroboration" },
+    { "step": "decision",      "actor": "system", "timestamp": "2026-06-03T10:00:05Z", "detail": "ISSUE_WITH_LOADING 40-60%" }
+  ]
+}

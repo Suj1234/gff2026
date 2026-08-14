@@ -8,9 +8,10 @@ const STEPS = ["Identity & KYC", "Product & Cover", "Financial", "Health", "Deci
 const TOTAL = 7
 
 export function StepSidebar({
-  active, appId, startedAt,
+  active, appId, startedAt, maxReached = active, onJump,
 }: {
   active: number; appId?: string; startedAt?: string
+  maxReached?: number; onJump?: (n: number) => void
 }) {
   const doneCount = active - 1
   const pct = Math.round((doneCount / TOTAL) * 100)
@@ -34,21 +35,25 @@ export function StepSidebar({
             const n = i + 1
             const done = n < active
             const isActive = n === active
+            const reachable = n <= maxReached && !!onJump
             return (
               <li key={label} className="relative flex gap-3 pb-5 last:pb-0">
                 {n < STEPS.length && (
                   <span className={`absolute left-[13px] top-7 h-[calc(100%-16px)] w-0.5 ${done ? "bg-primary" : "bg-border"}`} />
                 )}
-                <span className={`relative z-10 grid place-items-center size-7 rounded-full text-[12px] font-bold shrink-0
-                  ${done || isActive ? "bg-primary text-primary-foreground" : "border-2 border-border text-muted-foreground bg-white"}`}>
-                  {done ? <Check weight="bold" className="size-4" /> : n}
-                </span>
-                <div className="min-w-0 pt-0.5 flex-1">
-                  <div className="text-[11px] text-muted-foreground">Step {n}/{TOTAL}</div>
-                  <div className={`text-[13.5px] leading-tight ${isActive ? "font-semibold text-primary" : done ? "font-medium text-foreground" : "text-muted-foreground"}`}>
-                    {label}
+                <button type="button" disabled={!reachable} onClick={() => reachable && onJump!(n)}
+                  className={`relative flex gap-3 w-full text-left ${reachable ? "cursor-pointer group" : "cursor-default"}`}>
+                  <span className={`relative z-10 grid place-items-center size-7 rounded-full text-[12px] font-bold shrink-0
+                    ${done || isActive ? "bg-primary text-primary-foreground" : "border-2 border-border text-muted-foreground bg-white"}`}>
+                    {done ? <Check weight="bold" className="size-4" /> : n}
+                  </span>
+                  <div className="min-w-0 pt-0.5 flex-1">
+                    <div className="text-[11px] text-muted-foreground">Step {n}/{TOTAL}</div>
+                    <div className={`text-[13.5px] leading-tight ${isActive ? "font-semibold text-primary" : done ? "font-medium text-foreground group-hover:text-primary" : "text-muted-foreground"}`}>
+                      {label}
+                    </div>
                   </div>
-                </div>
+                </button>
               </li>
             )
           })}

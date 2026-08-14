@@ -298,10 +298,12 @@ def _merge_mock_aadhaar(db: Session, app: Application) -> None:
 # ---------------------------------------------------------------------------
 class ProductRequest(BaseModel):
     app_id: int
-    product_type: str = "individual_health"
+    product_type: str = "term_life"
+    plan: str = "term_protect"
     sum_assured: int = 0
     tenure_years: int = 1
-    riders: list[str] = []
+    # riders carry an optional amount: [{"id","amount"}] (or legacy ["id"]) — priced in pricing.py
+    riders: list[Any] = []
 
 
 def _premium_for(app: Application, req: "ProductRequest") -> dict:
@@ -312,6 +314,8 @@ def _premium_for(app: Application, req: "ProductRequest") -> dict:
         age=int(applicant.get("age") or 0),
         sum_assured=req.sum_assured,
         product_type=req.product_type,
+        plan=req.plan,
+        tenure_years=req.tenure_years,
         tobacco=bool(hd.get("tobacco")),
         pincode=applicant.get("pincode"),
         riders=req.riders,
@@ -338,6 +342,7 @@ def set_product(req: ProductRequest, request: Request, db: Session = Depends(get
     def add(bundle):
         product = bundle.setdefault("application", {}).setdefault("product", {})
         product["type"] = req.product_type
+        product["plan"] = req.plan
         product["sum_assured"] = req.sum_assured
         product["tenure_years"] = req.tenure_years
         product["riders"] = req.riders                 # extra="allow" on the engine side
@@ -543,11 +548,38 @@ def face_scan_start(app_id: int, request: Request, db: Session = Depends(get_ses
 
 
 def _merge_mock_vitals(db: Session, app: Application) -> None:
+    """Inject a realistic NuralX result and adapt it, so the mock demo shows the SAME
+    rich vitals a live scan returns (decision vitals + display-only vitals_extra). Routing
+    through the real adapter keeps the mock honest — it can't drift from the live shape."""
+    from underwriting.sources import nuralx as nuralx_adapter
+    # Full NuralX result shape (all ~30 params a live scan returns), clean-vitals mock.
+    mock_results = {
+        "prq": {"value": 3.4},
+        "pulseRate": {"value": 74}, "respirationRate": {"value": 16},
+        "oxygenSaturation": {"value": 98},
+        "bloodPressure": {"value": {"systolic": 118, "diastolic": 76}},
+        "meanArterialPressure": {"value": 90}, "pulsePressure": {"value": 42},
+        "cardiacWorkload": {"value": 3.2},
+        "hemoglobin": {"value": 14.2}, "hemoglobinA1c": {"value": 5.4},
+        "stressIndex": {"value": 42}, "stressLevel": {"value": 1},
+        "normalizedStressIndex": {"value": 12},
+        "wellnessIndex": {"value": 7}, "wellnessLevel": {"value": 3},
+        "sdnn": {"value": 58}, "rmssd": {"value": 44}, "meanRri": {"value": 812},
+        "lfhf": {"value": 1.6}, "sd1": {"value": 31}, "sd2": {"value": 83},
+        "pnsIndex": {"value": 0.4}, "snsIndex": {"value": -0.2},
+        "pnsZone": {"value": 2}, "snsZone": {"value": 2},
+        "highBloodPressureRisk": {"value": 0}, "highHemoglobinA1CRisk": {"value": 0},
+        "highFastingGlucoseRisk": {"value": 0}, "highTotalCholesterolRisk": {"value": 0},
+        "lowHemoglobinRisk": {"value": 0},
+        "rri": [{"interval": v, "timestamp": i} for i, v in enumerate(
+            [797, 837, 739, 772, 834, 759, 806, 704, 790, 745, 812, 763, 739, 723,
+             845, 730, 725, 812, 799, 736, 808, 735, 763, 753, 727, 777, 769, 749])],
+    }
+    rppg = nuralx_adapter.to_rppg_scan({"status": "completed", "results": mock_results})
+
     def add(bundle):
         sig = bundle.setdefault("signals", {})
-        sig["rppg_scan"] = {"status": "available", "consented": True,
-                            "vitals": {"heart_rate": 74, "respiratory_rate": 16,
-                                       "spo2": 98, "bp": "118/76"}}
+        sig["rppg_scan"] = rppg
         sig["liveness_facematch"] = {"status": "available", "liveness_pass": True,
                                      "liveness_score": 0.96, "face_match_score": 0.94,
                                      "deepfake_flag": False}
@@ -557,12 +589,59 @@ def _merge_mock_vitals(db: Session, app: Application) -> None:
     track_event(db, event_type="face_scan_completed", application_id=app.id, detail={"mock": True})
 
 
+# ABHA linking follows the real ABDM handshake: the applicant provides their ABHA number
+# (14-digit) or ABHA address, verifies via a Mobile-OTP or Aadhaar-OTP auth method, then
+# approves a consent request (record types + date range + purpose) before records are
+# pulled. The OTP is a demo formality (mock) — the RECORD is the keyed mock; the STEP
+# (consent-gated request) is real (files/CLAUDE.md §3 "mock the response, not the step").
+class AbhaOtpSendRequest(BaseModel):
+    app_id: int
+    abha_id: str                       # 14-digit ABHA number or an ABHA address
+    auth_method: str = "mobile_otp"    # mobile_otp | aadhaar_otp
+
+
+@router.post("/abha/otp/send")
+def abha_otp_send(req: AbhaOtpSendRequest, request: Request, db: Session = Depends(get_session)) -> dict:
+    """Begin ABHA verification: stash a (mock) OTP + the entered ABHA id on the bundle,
+    return the demo OTP so the UI can show it. A live ABDM deploy sends a real OTP here."""
+    app = _require_app(request, req.app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+    if not (req.abha_id or "").strip():
+        return {"success": False, "message": "Enter an ABHA number or address."}
+    # Deterministic demo OTP from the ABHA id (no RNG — reproducible on stage, §11 pure).
+    otp = f"{(abs(hash(req.abha_id.strip())) % 900000) + 100000:06d}"
+
+    def add(bundle):
+        j = bundle.setdefault("_journey", {})
+        j["abha_otp"] = otp
+        j["abha_id"] = req.abha_id.strip()
+        j["abha_auth_method"] = req.auth_method
+    _mutate_bundle(app, add)
+    db.add(app)
+    track_api_call(db, provider="abha", endpoint="otp/send (mock)", mode="mock",
+                   application_id=app.id, ok=True,
+                   request_summary={"auth_method": req.auth_method})
+    track_event(db, event_type="abha_otp_sent", application_id=app.id,
+                detail={"auth_method": req.auth_method})
+    method = "mobile" if req.auth_method == "mobile_otp" else "Aadhaar-linked mobile"
+    return {"success": True, "debug_otp": otp,
+            "message": f"OTP sent to the applicant's {method} number."}
+
+
 @router.post("/abha/fetch/{app_id}")
-def abha_fetch(app_id: int, request: Request, db: Session = Depends(get_session)) -> dict:
-    """Fetch ABHA health records (mock, keyed off PAN/mobile). Records ABHA consent inline."""
+def abha_fetch(app_id: int, request: Request, otp: str = "", db: Session = Depends(get_session)) -> dict:
+    """Verify the ABHA OTP, record consent, then fetch health records (mock, keyed off
+    PAN/mobile). The OTP must match the one issued by /abha/otp/send (unless none was
+    issued — the legacy no-OTP path stays working for the E2E test + any direct caller)."""
     app = _require_app(request, app_id, db)
     if app is None:
         return {"success": False, "message": "unauthorized"}
+
+    issued = (app.bundle.get("_journey") or {}).get("abha_otp")
+    if issued and otp.strip() != issued:
+        return {"success": False, "message": "Incorrect OTP — check and try again."}
+
     _record_consent(db, app, "abha", "ABDM")
 
     from underwriting import mock_abha
@@ -690,6 +769,7 @@ def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -
         "current_step": app.current_step,
         "status": app.status,
         "applicant": application.get("applicant", {}) or {},
+        "financial": application.get("financial", {}) or {},   # Step 3 pre-fill on revisit
         "signals": {
             "pan_verify": signals.get("pan_verify", {}) or {},
             "mobile_intel": signals.get("mobile_intel", {}) or {},
@@ -699,6 +779,10 @@ def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -
             "mca_director": signals.get("mca_director", {}) or {},
             "email_intel": signals.get("email_intel", {}) or {},
             "aadhaar_ekyc": signals.get("aadhaar_ekyc", {}) or {},
+            "account_aggregator": signals.get("account_aggregator", {}) or {},  # Step 3 statement state
+            "rppg_scan": signals.get("rppg_scan", {}) or {},                    # Step 4 face-scan vitals
+            "liveness_facematch": signals.get("liveness_facematch", {}) or {},  # Step 4 liveness/deepfake
+            "abha_health_records": signals.get("abha_health_records", {}) or {},# Step 4 ABHA fetch state
         },
     }
 
@@ -741,13 +825,41 @@ def rail(app_id: int, request: Request, step: int = 5,
         # severity/reason from the SAME scorer the report uses; unchecked group -> idle
         # so a not-yet-returned source never shows a green "clean" it hasn't earned.
         severity = _LEVEL[C.safety_band(r.risk_sub_score)] if has_data else "idle"
-        groups.append({
+        g = {
             "key": key, "label": label,
             "sub_score": r.risk_sub_score,
             "severity": severity,          # ok | warn | bad | idle
             "why": r.why if has_data else "awaiting source",
-        })
+        }
+        # Financial group carries read-only context sub-items the underwriter cross-checks
+        # against declared income (GST turnover is a real fetched fact; vehicle + imputed
+        # income are backend-fed, blank/null until their bundle fields land — no theatre).
+        if key == "financial":
+            g["context"] = _financial_context(raw)
+        groups.append(g)
     return {"success": True, "safety_score": ss.value, "band": ss.band, "groups": groups}
+
+
+def _financial_context(bundle: dict) -> list[dict]:
+    """Financial-group rail context: {label, value} rows. value=None renders as '—'
+    (awaiting source). GST turnover is populated today; vehicle + imputed income are
+    placeholders wired to their intended bundle paths (backend fills them later)."""
+    sig = bundle.get("signals", {}) or {}
+    gst = sig.get("gst") or {}
+    # intended bundle paths for the not-yet-wired signals (blank until backend emits them):
+    vehicle = sig.get("vehicle") or {}                 # signals.vehicle.* (RTO / vahan lookup)
+    aa = sig.get("account_aggregator") or {}
+    return [
+        {"label": "GST turnover", "value": gst.get("turnover_slab")},
+        {"label": "Vehicle", "value": vehicle.get("model") or vehicle.get("registration")},
+        {"label": "Imputed income", "value": _inr(vehicle.get("imputed_annual_income")
+                                                or aa.get("imputed_annual_income"))},
+    ]
+
+
+def _inr(n) -> Optional[str]:
+    """₹ format an int amount for a rail value, or None (-> '—') when absent."""
+    return ("₹{:,}".format(int(n))) if isinstance(n, (int, float)) and n else None
 
 
 # ---------------------------------------------------------------------------
@@ -805,11 +917,56 @@ def decide(app_id: int, request: Request, db: Session = Depends(get_session)) ->
     return {"success": True, "verdict": verdict, "status": status, "waiting_on": waiting_on}
 
 
+def _mock_report() -> dict:
+    """The canned Rohit ISSUE_WITH_LOADING report (journey/mock_report.json) — a full,
+    rich ReportOutput for demoing the Step-5 render without running the live engine."""
+    import json
+    from pathlib import Path
+    return json.loads((Path(__file__).parent / "mock_report.json").read_text(encoding="utf-8"))
+
+
+@router.get("/decision/{app_id}")
+def get_decision(app_id: int, request: Request, mock: int = 0,
+                 db: Session = Depends(get_session)) -> dict:
+    """Read-only fetch of the latest persisted decision + full report for the React
+    center to render (the /decide POST only returns the verdict envelope; the full
+    ReportOutput dict lives on DecisionRecord.report). Session-gated, no mutation.
+    Returns {success:false, pending_decision:true} when the engine hasn't run yet.
+
+    ?mock=1 -> serve the canned rich demo report (no session, no DB) so the full Step-5
+    render can be shown/QA'd against a complete payload."""
+    if mock:
+        r = _mock_report()
+        return {"success": True, "verdict": r["decision"]["verdict"], "status": "complete",
+                "waiting_on": None, "safety_score": r["safety_score"]["value"], "report": r}
+    app = _require_app(request, app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+    from .models import DecisionRecord
+    rec = db.exec(
+        select(DecisionRecord).where(DecisionRecord.application_id == app_id)
+        .order_by(DecisionRecord.created_at.desc())
+    ).first()
+    if rec is None:
+        return {"success": False, "pending_decision": True}
+    return {
+        "success": True,
+        "verdict": rec.verdict,
+        "status": rec.status,
+        "waiting_on": rec.waiting_on,
+        "safety_score": rec.safety_score,
+        "report": rec.report,
+    }
+
+
 # ---------------------------------------------------------------------------
-# Step 6 — Nominee (+ appointee if DOB < 18, Insurance Act §39). Display-capture.
+# Step 6 — Nominee(s) (+ appointee if a nominee's DOB < 18, Insurance Act §39).
+# Display-capture. Multiple nominees with a share split; the FIRST nominee is also
+# stored as application.nominee (the single dict the engine reads — schemas.nominee,
+# rules.py R-M2 relationship) so the underwriting contract is unchanged; the full list
+# lands under application.nominees[] (bundle is extra="allow").
 # ---------------------------------------------------------------------------
-class NomineeRequest(BaseModel):
-    app_id: int
+class NomineeItem(BaseModel):
     name: str
     dob: Optional[str] = None
     relationship: Optional[str] = None
@@ -820,35 +977,72 @@ class NomineeRequest(BaseModel):
     appointee_relationship: Optional[str] = None
 
 
+class NomineeRequest(BaseModel):
+    app_id: int
+    # Single-nominee body (name at top level) still accepted for back-compat; the console
+    # sends nominees[] for the multi-nominee split. One of the two must carry a name.
+    name: Optional[str] = None
+    dob: Optional[str] = None
+    relationship: Optional[str] = None
+    share_pct: Optional[int] = 100
+    address: Optional[str] = None
+    appointee_name: Optional[str] = None
+    appointee_dob: Optional[str] = None
+    appointee_relationship: Optional[str] = None
+    nominees: Optional[list[NomineeItem]] = None
+
+
+def _nominee_dict(item: "NomineeItem | NomineeRequest") -> tuple[dict, bool]:
+    """Build one stored nominee dict; returns (dict, minor). Adds an appointee sub-block
+    (and requires its name) when the nominee's DOB makes them a minor (Insurance Act §39)."""
+    minor = False
+    if item.dob:
+        age = _age_from_dob(item.dob)
+        minor = age is not None and age < 18
+    nominee = {
+        "name": item.name, "dob": item.dob, "relationship": item.relationship,
+        "share_pct": item.share_pct, "address": item.address,
+    }
+    if minor:
+        nominee["appointee"] = {
+            "name": item.appointee_name, "dob": item.appointee_dob,
+            "relationship": item.appointee_relationship,
+        }
+    return nominee, minor
+
+
 @router.post("/nominee")
 def set_nominee(req: NomineeRequest, request: Request, db: Session = Depends(get_session)) -> dict:
     app = _require_app(request, req.app_id, db)
     if app is None:
         return {"success": False, "message": "unauthorized"}
 
-    minor = False
-    if req.dob:
-        age = _age_from_dob(req.dob)
-        minor = age is not None and age < 18
-    if minor and not req.appointee_name:
-        return {"success": False, "message": "Nominee is a minor — an appointee is required (Insurance Act §39)."}
+    # Normalise to a list: prefer nominees[], fall back to the single top-level body.
+    items: list = list(req.nominees) if req.nominees else ([req] if req.name else [])
+    items = [it for it in items if (it.name or "").strip()]
+    if not items:
+        return {"success": False, "message": "At least one nominee name is required."}
+
+    shares = sum(int(it.share_pct or 0) for it in items)
+    if len(items) > 1 and shares != 100:
+        return {"success": False, "message": f"Nominee shares must total 100% (currently {shares}%)."}
+
+    built = [_nominee_dict(it) for it in items]
+    for (nominee, minor), it in zip(built, items):
+        if minor and not it.appointee_name:
+            return {"success": False,
+                    "message": f"{it.name} is a minor — an appointee is required (Insurance Act §39)."}
+    any_minor = any(m for _, m in built)
 
     def add(bundle):
-        nominee = {
-            "name": req.name, "dob": req.dob, "relationship": req.relationship,
-            "share_pct": req.share_pct, "address": req.address,
-        }
-        if minor:
-            nominee["appointee"] = {
-                "name": req.appointee_name, "dob": req.appointee_dob,
-                "relationship": req.appointee_relationship,
-            }
-        bundle.setdefault("application", {})["nominee"] = nominee
+        appn = bundle.setdefault("application", {})
+        appn["nominees"] = [n for n, _ in built]
+        appn["nominee"] = built[0][0]  # primary — the dict the engine reads
     _mutate_bundle(app, add)
     db.add(app)
     track_event(db, event_type="nominee_captured", application_id=app.id, actor="customer",
-                detail={"relationship": req.relationship, "minor": minor})
-    return {"success": True, "minor": minor}
+                detail={"count": len(items), "relationship": items[0].relationship, "minor": any_minor})
+    return {"success": True, "minor": any_minor, "count": len(items)}
 
 
 # ---------------------------------------------------------------------------

@@ -68,9 +68,35 @@ def _results(body: dict) -> dict:
     return r if isinstance(r, dict) else {}
 
 
+# Secondary vitals the scan returns but NO rule reads — carried through as display-only
+# context for the journey face-scan panel + right rail (JOURNEY_PLAN §9 E7). Kept OUT of
+# `vitals` so R-017 never sees them; a NuralX result key → our snake_case label.
+_EXTRA_VITALS = {
+    # cardiac / metabolic scalars
+    "hemoglobin": "hemoglobin", "hemoglobinA1c": "hba1c",
+    "meanArterialPressure": "map", "pulsePressure": "pulse_pressure",
+    "cardiacWorkload": "cardiac_workload", "prq": "prq",
+    # stress / wellness
+    "stressIndex": "stress_index", "stressLevel": "stress_level",
+    "normalizedStressIndex": "stress_index_norm",
+    "wellnessIndex": "wellness_index", "wellnessLevel": "wellness_level",
+    # HRV / autonomic (time-domain + Poincaré + LF/HF + PNS/SNS)
+    "sdnn": "sdnn", "rmssd": "rmssd", "meanRri": "mean_rri", "lfhf": "lf_hf",
+    "sd1": "sd1", "sd2": "sd2",
+    "pnsIndex": "pns_index", "snsIndex": "sns_index",
+    "pnsZone": "pns_zone", "snsZone": "sns_zone",
+    # vendor risk FLAGS (0=none..3=high) — facts we display, never decide on (§1.8)
+    "highBloodPressureRisk": "risk_high_bp", "highHemoglobinA1CRisk": "risk_hba1c",
+    "highFastingGlucoseRisk": "risk_glucose", "highTotalCholesterolRisk": "risk_cholesterol",
+    "lowHemoglobinRisk": "risk_low_hemoglobin",
+}
+
+
 def to_rppg_scan(body: dict) -> dict:
     """Webhook body → internal `rppg_scan` shape (schemas.RppgScan). Vitals keyed
-    heart_rate / respiratory_rate / spo2 / bp — the exact keys R-017 reads."""
+    heart_rate / respiratory_rate / spo2 / bp — the exact keys R-017 reads. Secondary
+    vitals (HRV, stress, HbA1c, vendor risk flags) ride along under `vitals_extra` as
+    non-decision context — display only, no rule reads them (§1.8, JOURNEY_PLAN §9 E7)."""
     if _is_failure(body):
         return {"status": "unavailable"}
     r = _results(body)
@@ -88,10 +114,21 @@ def to_rppg_scan(body: dict) -> dict:
     }
     # Drop vitals the scan didn't return, so absent ≠ a spurious out-of-range reading.
     vitals = {k: v for k, v in vitals.items() if v is not None}
+    extra = {label: _num(r.get(key)) for key, label in _EXTRA_VITALS.items()
+             if _num(r.get(key)) is not None}
+    # The RR-interval tachogram: a waveform, not a scalar — carry the interval series
+    # through for an optional sparkline (display only). Keep it small + robust to shape.
+    rri = _val(r.get("rri"))
+    if isinstance(rri, list) and rri:
+        series = [_num(p.get("interval")) if isinstance(p, dict) else _num(p) for p in rri]
+        series = [v for v in series if v is not None]
+        if series:
+            extra["rri_series"] = series[:120]  # cap: a tachogram, not unbounded telemetry
     return {
         "status": "available",
         "consented": True,  # a returned scan implies the applicant ran it
         "vitals": vitals,
+        "vitals_extra": extra,
     }
 
 

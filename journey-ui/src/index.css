@@ -137,6 +137,37 @@
 /* big numbers (gauge, scores) use the display face too */
 .tabular-nums { font-feature-settings: "tnum"; }
 
+/* ── Elevation system (researched: Mercury/Radix warm light) ───────────────
+   Cards step up toward white from the warm cream page and separate by a small
+   luminance lift + a warm hairline border + a soft warm shadow. Firm enough that
+   sidebar/rail cards (which sit directly on the page) still read as real cards. */
+:root {
+  --card-tint: oklch(0.995 0.002 95);
+  --elev-1: 0 1px 2px rgba(42,41,36,0.07);
+  --elev-2: 0 1px 3px rgba(42,41,36,0.08), 0 6px 18px -6px rgba(42,41,36,0.10);
+  --elev-3: 0 12px 32px rgba(42,41,36,0.12);
+}
+.dark {
+  --card-tint: oklch(0.205 0 0);
+  --elev-1: 0 1px 2px rgba(0,0,0,0.30);
+  --elev-2: 0 2px 8px rgba(0,0,0,0.35);
+  --elev-3: 0 8px 32px rgba(0,0,0,0.45);
+}
+.elev-card {
+  background: var(--card-tint);
+  box-shadow: var(--elev-2);
+  border: 1px solid var(--border);
+}
+.dark .elev-card { border-color: oklch(1 0 0 / 0.08); }
+.elev-1 { box-shadow: var(--elev-1); }
+.elev-2 { box-shadow: var(--elev-2); }
+.elev-3 { box-shadow: var(--elev-3); }
+
+/* Muted status surfaces — status colors WHISPER (lower chroma), never shout. */
+.stat-ok   { background: oklch(0.965 0.03 165); color: oklch(0.48 0.08 165); border-color: oklch(0.90 0.04 165); }
+.stat-warn { background: oklch(0.97 0.035 85); color: oklch(0.52 0.09 75);  border-color: oklch(0.90 0.05 85); }
+.stat-bad  { background: oklch(0.965 0.03 25);  color: oklch(0.52 0.13 25);  border-color: oklch(0.90 0.05 25); }
+
 /* One tasteful motion moment: rail chips + cards fade-up as they mount. */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(6px); }

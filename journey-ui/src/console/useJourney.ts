@@ -8,6 +8,9 @@ export type Applicant = {
   name?: string; dob?: string; gender?: string; age?: number
   address?: string; pincode?: string; mobile?: string
 }
+export type Financial = {
+  declared_annual_income?: number; source_of_funds?: string; purpose_of_cover?: string
+}
 export type Signals = {
   pan_verify?: { pan?: string; pan_status?: string }
   mobile_intel?: { provider?: string; ported_recently?: boolean }
@@ -16,20 +19,60 @@ export type Signals = {
   litigation_fir?: Record<string, unknown>
   mca_director?: { director_default?: boolean }
   email_intel?: { email?: string }
-  aadhaar_ekyc?: { status?: string; name?: string }
+  aadhaar_ekyc?: { status?: string; name?: string; dob?: string; address?: string; photo?: boolean }
+  account_aggregator?: { status?: string; imputed_annual_income?: number }
+  rppg_scan?: {
+    status?: string; consented?: boolean
+    vitals?: { heart_rate?: number; respiratory_rate?: number; spo2?: number; bp?: { systolic?: number; diastolic?: number } | string }
+    vitals_extra?: Record<string, number>   // display-only secondary vitals (HRV/stress/HbA1c/risk flags)
+  }
+  liveness_facematch?: { status?: string; liveness_pass?: boolean; liveness_score?: number; face_match_score?: number; deepfake_flag?: boolean }
+  abha_health_records?: { status?: string; diagnoses?: string[]; icd_codes?: string[] }
 }
 export type AppSnapshot = {
   success: boolean
   application_number?: string
   current_step?: number
   applicant: Applicant
+  financial?: Financial
   signals: Signals
   seeded?: boolean
 }
 
+// ---- Step 5 decision report (underwriting/report.py ReportOutput; extra="allow", so
+// sections + report carry arbitrary richer nested fields we render shape-tolerantly). ----
+export type Section = { risk_level: string; sub_score?: number; weight?: number; findings?: string; assessed?: boolean; [k: string]: any }
+export type SoftFlag = { flag_type: string; related_rule: string; severity?: string; reason_code?: string; reason?: string }
+export type AmbiguousFlag = { flag_id?: string; flag_type: string; related_rule: string; context?: Record<string, any> }
+export type ScoreRowT = { source_group: string; weight?: number; risk_sub_score?: number; contribution?: number; why?: string }
+export type CitedEvidence = { claim: string; cited_source: string; ruling?: string | null; cycle?: number | null }
+export type AuditEntry = { step: string; actor: string; timestamp?: string | null; detail: string }
+export type DecisionReport = {
+  report_meta?: Record<string, any>
+  safety_score?: { value: number; band: string; bands?: Record<string, string>; _note?: string } | null
+  scoring_breakdown?: ScoreRowT[]
+  scoring_total?: Record<string, any>
+  signals?: Record<string, any>
+  sections?: Record<string, Section>
+  risk_scores?: { fraud_score?: number; anomaly_score?: number; graph_score?: number; composite_band?: string; shap?: Record<string, number> } | null
+  bre_result?: { outcome: string; hard_gate?: string | null; soft_flags?: SoftFlag[]; ambiguous_flags?: AmbiguousFlag[] } | null
+  risk_and_fraud_verdict?: Record<string, any>
+  decision?: { verdict: string; escalation_reason?: string | null; next_step?: string | null; reason_summary?: string; loading_pct?: number | null; loading_band?: string | null; indicative_loading_if_cleared?: string | null; secondary_flag?: string | null; reason_codes?: string[] } | null
+  cited_evidence_chain?: CitedEvidence[]
+  run_metadata?: { model?: string | null; prompt_version?: string | null; judge_cycles?: number } | null
+  audit_log?: AuditEntry[]
+}
+export type DecisionResult = {
+  success: boolean; pending_decision?: boolean
+  verdict?: string; status?: string; waiting_on?: string | null
+  safety_score?: number | null; report?: DecisionReport
+}
+
+export type RailContext = { label: string; value: string | null }
 export type RailGroup = {
   key: string; label: string; sub_score: number
   severity: "ok" | "warn" | "bad" | "idle"; why: string
+  context?: RailContext[]   // read-only sub-items (Financial: GST / vehicle / imputed income)
 }
 export type Rail = { safety_score: number | null; band: string | null; groups: RailGroup[] }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import type { Rail } from "./useJourney"
+import type { Rail, RailGroup } from "./useJourney"
 import { Pulse } from "@phosphor-icons/react"
 
 // Right rail — Option A: ONE outer "Agent Read" card containing the gauge + source ROWS
@@ -19,7 +19,7 @@ export function railTone(band?: string | null): Tone {
   return band === "Low Risk" ? "ok" : band === "Moderate Risk" ? "warn" : band ? "bad" : "idle"
 }
 
-export function railRows(rail: Rail | null) {
+export function railRows(rail: Rail | null): RailGroup[] {
   return rail?.groups?.length
     ? rail.groups
     : ["Identity / KYC", "Occupation", "Fraud", "Litigation", "Contactability"].map((label) => ({
@@ -90,6 +90,18 @@ export function RailBody({ rail }: { rail: Rail | null }) {
                 </span>
               </div>
               <p className="mt-1 text-[12px] text-muted-foreground leading-snug pl-4">{g.why}</p>
+              {g.context && g.context.length > 0 && (
+                <dl className="mt-2 pl-4 space-y-1">
+                  {g.context.map((c) => (
+                    <div key={c.label} className="flex items-baseline justify-between gap-3">
+                      <dt className="text-[11px] text-muted-foreground">{c.label}</dt>
+                      <dd className={`text-[11px] font-medium tabular-nums text-right ${c.value ? "text-foreground" : "text-muted-foreground/60"}`}>
+                        {c.value || "—"}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
             </li>
           )
         })}
@@ -106,7 +118,7 @@ export function RailBody({ rail }: { rail: Rail | null }) {
 // Desktop / tablet rail column. Shown lg+ (desktop) and md (tablet) via the caller's grid.
 export function AgentRail({ rail, className = "" }: { rail: Rail | null; className?: string }) {
   return (
-    <aside className={`shrink-0 p-5 self-start sticky top-14 ${className}`} aria-label="What the agent sees">
+    <aside className={`shrink-0 self-start sticky top-14 ${className}`} aria-label="What the agent sees">
       <div className="rounded-2xl border bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
         <RailBody rail={rail} />
       </div>
