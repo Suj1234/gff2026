@@ -34,35 +34,66 @@ uvicorn underwriting.api:app --host 0.0.0.0 --port 8899
 
 ## 2. Where it runs (the live picture)
 
+**The REAL request path (verified live — do not trust older diagrams):**
+
 ```
 Browser
   │  https://iadore-onboarding-poc.ins.perfios.com/demo/life
   ▼
-Nginx gateway  (/opt/gateway/gateway.conf on the VPS)
-  │  location /demo/life/  ->  proxy_pass http://gff2026:8899
+Cloudflare  (terminates HTTPS/443 for *.ins.perfios.com — perfios.com CF account)
+  │  ALL /demo/* traffic goes to ONE origin door: port 5009
   ▼
-gff2026 container   (this project, port 8899, on docker network "demo-net")
+india-health-onboarding container  (Next.js, port 5009)  ← the ONLY public door
+  │  next.config.mjs rewrites()  /demo/life/*  ->  http://gff2026:8899/demo/life/*
+  ▼  (internal, over docker network "demo-net")
+gff2026 container   (THIS project — FastAPI, port 8899)
   │
-  ├── serves the React UI + /api/* backend + the agent
+  ├── serves the React journey-ui + /api/* backend + the underwriting agent
   └── DATABASE_URL -> Neon (managed Postgres, external)
 ```
+
+> ⚠️ **THE ONE RULE: everything public goes through port 5009. There is NO other
+> public port.** This app's `8899` is INTERNAL only — never whitelisted, never
+> reachable from the browser directly. Do NOT try to expose `8899`, add a new port,
+> or whitelist a new URL. Every demo app on this server (india-health, facescan,
+> kenya, life) shares the single `/demo/*` door on 5009 and is told apart by PATH.
+>
+> There is **no nginx gateway** and **no `/opt/gateway/gateway.conf`** in the live
+> path (an old note claimed there was — it is WRONG and cost hours of debugging).
+> Host **Apache** on `:80` has a leftover `/demo/life -> 8899` ProxyPass line that
+> is **dead** (Cloudflare never hits Apache). Ignore it.
 
 | Thing | Value |
 |---|---|
 | **Public URL** | `https://iadore-onboarding-poc.ins.perfios.com/demo/life` |
-| **Base path** | `/demo/life` (the gateway strips nothing — the app is built to live under this prefix) |
-| **VPS** | `172.17.4.99`, SSH port `1729`, user `sujeetk` (VPN required to reach it) |
+| **Public door** | Cloudflare → **port 5009** (india-health). ALWAYS 5009. Never another port. |
+| **This app's port** | `8899` — **internal only**, on `demo-net`. Not published publicly, not whitelisted. |
+| **Base path baked into app** | `/demo/life` — see `BASE_PATH` env in `deploy.yml`; the FastAPI app is *mounted* under it (`underwriting/api.py`). Do NOT rely on `root_path` — it does not strip/route, only documents. |
+| **How it's reached** | india-health's `next.config.mjs` `rewrites()` forwards `/demo/life/*` → `http://gff2026:8899/demo/life/*` |
+| **VPS** | `172.17.4.99`, SSH port `1729`, user `sujeetk` (VPN required) |
 | **Harbor image** | `harbor.hinagro.com/insurance/gff2026:latest` |
 | **Container name** | `gff2026` |
-| **Port** | `8899` (container) — reached by nginx over the `demo-net` network, NOT published to the host by a public port |
-| **Docker network** | `demo-net` (already exists; shared with india-health, kenya, etc.) |
+| **Docker network** | `demo-net` (shared with india-health, kenya) — this app AND india-health must both be on it |
 | **Env file on VPS** | `/opt/gff2026/.env` |
-| **Database** | Neon (Postgres) — connection string in the env file, nothing to host |
-| **Gateway config** | `/opt/gateway/gateway.conf` (nginx) |
+| **Database** | Neon (Postgres) — connection string in the env file |
 
-Neighbours on the same gateway (do **not** touch):
-- `/demo/kenya/` → kenya-web / kenya-api
-- `/` (catch-all) → india-health-onboarding (serves `/demo/acme-insurance`, `/demo/facescan`, … as its own slugs)
+Neighbours sharing the single 5009 door (do **not** touch):
+- `/demo/acme-insurance`, `/demo/facescan`, … → routes **inside** india-health itself (its own slugs)
+- `/demo/life/*` → forwarded to THIS app (the only "separate app" behind the door)
+
+> **Consequence for daily work:** normal code changes here need NOTHING in
+> india-health — just `git push` this repo; the runner rebuilds `gff2026`. You only
+> touch india-health's rewrite if THIS app's **URL path (`/demo/life`)**, **container
+> name (`gff2026`)**, or **internal port (`8899`)** changes. The two repos are
+> otherwise fully independent (separate GitHub repos, separate images, separate
+> deploys).
+
+> **Gotcha — bare URL trailing slash:** the FastAPI app is *mounted* at `/demo/life`,
+> so it answers at `/demo/life/` (slashed) but NOT bare `/demo/life`. Browsers strip
+> the trailing slash, so users always hit the bare form. This is handled in
+> india-health's rewrite: bare `/life` → `http://gff2026:8899/demo/life/` (slashed
+> destination). If you ever change the base path, keep that slash-forward or the bare
+> URL 404s with `{"detail":"Not Found"}`.
 
 ---
 
