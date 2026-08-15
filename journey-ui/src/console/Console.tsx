@@ -10,6 +10,7 @@ import { FinancialStep, type FinancialState } from "./FinancialStep"
 import { HealthStep, type HealthState, emptyHealth, healthPayload, visibleHealthSubSteps } from "./HealthStep"
 import { DecisionStep } from "./DecisionStep"
 import { NomineeStep, type Nominee, emptyNominee, nomineePayload, shareTotal } from "./NomineeStep"
+import { PaymentStep } from "./PaymentStep"
 import { PremiumBar } from "./PremiumBar"
 import { AgentRail } from "./AgentRail"
 import { RailSheet } from "./RailSheet"
@@ -215,20 +216,13 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
                   : <div className="mt-5 border-b" />}
               </div>
               <div className="px-4 sm:px-6 lg:px-8 py-6">
-                {step === 1 && <IdentityCenter snap={snap} />}
+                {step === 1 && <IdentityCenter snap={snap} appId={appId} />}
                 {step === 2 && <ProductStep appId={appId} snap={snap} value={product} onChange={setProduct} onPremium={setPremium} />}
                 {step === 3 && <FinancialStep appId={appId} snap={snap} value={financial} onChange={setFinancial} />}
                 {step === 4 && <HealthStep appId={appId} snap={snap} value={health} onChange={setHealth} subStep={healthSub} />}
                 {step === 5 && <DecisionStep appId={appId} />}
                 {step === 6 && <NomineeStep value={nominees} onChange={(n) => { setNominees(n); setStepMsg("") }} />}
-                {step > 6 && (
-                  <div className="grid place-items-center py-16 text-center text-muted-foreground">
-                    <div>
-                      <div className="text-sm font-medium">{meta.title} — coming next</div>
-                      <div className="text-xs mt-1">This step is being built.</div>
-                    </div>
-                  </div>
-                )}
+                {step === 7 && <PaymentStep appId={appId} snap={snap} premium={premium} />}
               </div>
               {/* shared footer */}
               <div className="border-t px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-3">
@@ -236,10 +230,13 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
                   className="text-sm text-muted-foreground hover:text-foreground disabled:opacity-40">‹ Back</button>
                 <div className="flex items-center gap-3">
                   {stepMsg && <span className="text-[12px] text-red-600 font-medium max-w-[22rem] text-right">{stepMsg}</span>}
-                  <button onClick={onContinue} disabled={saving || step === 7}
-                    className="rounded-md bg-primary text-primary-foreground text-sm font-medium px-5 h-10 hover:bg-primary/90 transition-colors disabled:opacity-60">
-                    {saving ? "Saving…" : `${onLastHealthSub ? meta.cta : "Continue"} ›`}
-                  </button>
+                  {/* Step 7's primary action is the Pay button inside the step; no footer Continue. */}
+                  {step !== 7 && (
+                    <button onClick={onContinue} disabled={saving}
+                      className="rounded-md bg-primary text-primary-foreground text-sm font-medium px-5 h-10 hover:bg-primary/90 transition-colors disabled:opacity-60">
+                      {saving ? "Saving…" : `${onLastHealthSub ? meta.cta : "Continue"} ›`}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

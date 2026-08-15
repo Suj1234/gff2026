@@ -1,0 +1,28 @@
+# Keep the build context small + fast. The Dockerfile rebuilds the UI itself.
+.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# UI: node_modules and the local build are rebuilt inside the image
+journey-ui/node_modules/
+journey-ui/dist/
+
+# local DB + secrets (never in an image)
+journey.db
+.env
+.env.*
+
+# git + CI + editor
+.git/
+.github/
+.claude/
+.gstack/
+.agents/
+
+# docs / heavy files not needed at runtime
+*.pdf
+files.zip
+docs/
+*.md
+tests/

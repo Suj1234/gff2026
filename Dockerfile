@@ -1,14 +1,30 @@
-# Underwriting agent — FastAPI + DSPy. Runs POST /underwrite for the journey to call.
-FROM python:3.13-slim
+# GFF 2026 — one image: React UI + journey backend + underwriting agent.
+# Served by uvicorn at :8899, behind the gateway at /demo/life.
 
+# ── Stage 1: build the React journey-ui into static files ──────────────────────
+FROM node:22-alpine AS ui
+WORKDIR /ui
+
+COPY journey-ui/package.json journey-ui/package-lock.json* ./
+RUN npm install
+
+COPY journey-ui/ ./
+# base=/demo/life/ is set in vite.config.ts so assets resolve behind the gateway.
+RUN npm run build
+
+# ── Stage 2: the Python app ───────────────────────────────────────────────────
+FROM python:3.13-slim
 WORKDIR /app
 
-# System certs for the corporate TLS proxy (dspy/tiktoken fetch model-cost data on-network).
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Only the agent package is needed to serve /underwrite.
+# The full app: agent + journey backend.
 COPY underwriting ./underwriting
+COPY journey ./journey
+
+# The built React UI, served by FastAPI (see underwriting/api.py).
+COPY --from=ui /ui/dist ./journey-ui/dist
 
 EXPOSE 8899
 # 1 worker is plenty for a demo; grey-zone calls are LLM-bound, not CPU-bound.

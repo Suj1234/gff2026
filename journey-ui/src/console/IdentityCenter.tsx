@@ -94,7 +94,7 @@ function IdentityHero({ snap }: { snap: AppSnapshot }) {
   )
 }
 
-export function IdentityCenter({ snap }: { snap: AppSnapshot }) {
+export function IdentityCenter({ snap, appId }: { snap: AppSnapshot; appId: number | null }) {
   const a = snap.applicant
   const epfo = snap.signals.epfo || {}
   const email = snap.signals.email_intel?.email
@@ -139,7 +139,10 @@ export function IdentityCenter({ snap }: { snap: AppSnapshot }) {
               <p className="text-sm text-muted-foreground">
                 Fetches verified name, DOB and address from Aadhaar. No Aadhaar number is stored.
               </p>
-              <button className="rounded-md bg-primary text-primary-foreground text-sm font-medium px-4 h-10 hover:bg-primary/90 transition-colors self-start">
+              <button
+                onClick={() => { if (appId != null) window.location.href = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/journey/digilocker/start/${appId}` }}
+                disabled={appId == null}
+                className="rounded-md bg-primary text-primary-foreground text-sm font-medium px-4 h-10 hover:bg-primary/90 transition-colors self-start disabled:opacity-50">
                 Verify via DigiLocker
               </button>
             </div>

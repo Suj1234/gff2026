@@ -11,6 +11,10 @@ export type Applicant = {
 export type Financial = {
   declared_annual_income?: number; source_of_funds?: string; purpose_of_cover?: string
 }
+export type Product = {
+  plan?: string; product_type?: string; sum_assured?: number; tenure_years?: number
+  premium?: number; payment_mode?: string
+}
 export type Signals = {
   pan_verify?: { pan?: string; pan_status?: string }
   mobile_intel?: { provider?: string; ported_recently?: boolean }
@@ -35,6 +39,8 @@ export type AppSnapshot = {
   current_step?: number
   applicant: Applicant
   financial?: Financial
+  product?: Product
+  status?: string
   signals: Signals
   seeded?: boolean
 }

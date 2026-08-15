@@ -519,26 +519,29 @@ def face_scan_start(app_id: int, request: Request, db: Session = Depends(get_ses
     try:
         from underwriting import nuralx
         creds = nuralx.creds_from_env()
-        token, _ = nuralx._generate_access_token(
-            creds.base_url, *nuralx._generate_client_credentials(creds))
+        # NuralX echoes `client_transaction_ID` back in the webhook — key the session on it
+        # so /face-scan/callback can correlate the vitals to THIS application. It IS the
+        # session_token passed to initiate_scan (nuralx.py sends session_token as the id).
+        ctid = uuid.uuid4().hex
+        # Point the webhook at the JOURNEY callback (writes into app.bundle), not the
+        # standalone in-memory /nuralx/callback. Same shared ?key= secret.
+        creds.callback_url = f"{os.getenv('PUBLIC_API_URL', '').rstrip('/')}" \
+                             f"/api/journey/face-scan/callback?key={os.getenv('NURALX_CALLBACK_SECRET', '')}"
         applicant = app.bundle.get("application", {}).get("applicant", {})
-        patient = nuralx.Patient(
-            name=applicant.get("name") or "Applicant",
-            client_transaction_id=uuid.uuid4().hex,
-        )
-        resp = nuralx.initiate_scan(creds, token, patient)
+        patient = nuralx.Patient(name=applicant.get("name") or "Applicant")
+        resp = nuralx.initiate_scan(creds, session_token=ctid, patient=patient)
         # persist a FaceScanSession so the webhook can correlate + resolve
         from .models import FaceScanSession
         db.add(FaceScanSession(
             token=uuid.uuid4().hex, application_id=app.id,
-            client_transaction_id=patient.client_transaction_id,
-            status="IN_PROGRESS", scan_access_url=resp.scan_access_url,
+            client_transaction_id=ctid,
+            status="IN_PROGRESS", scan_access_url=resp.scan_url,
         ))
         track_api_call(db, provider="nuralx", endpoint="patient-data", mode="real",
                        application_id=app.id, ok=True, latency_ms=int((time.time()-t0)*1000),
-                       response_summary={"has_scan_url": bool(resp.scan_access_url)})
+                       response_summary={"has_scan_url": bool(resp.scan_url)})
         track_event(db, event_type="face_scan_initiated", application_id=app.id)
-        return {"success": True, "mode": "real", "scan_url": resp.scan_access_url}
+        return {"success": True, "mode": "real", "scan_url": resp.scan_url}
     except Exception as e:
         track_api_call(db, provider="nuralx", endpoint="patient-data", mode="real",
                        application_id=app.id, ok=False, error=str(e)[:200])
@@ -587,6 +590,57 @@ def _merge_mock_vitals(db: Session, app: Application) -> None:
     track_api_call(db, provider="nuralx", endpoint="(mock)", mode="mock",
                    application_id=app.id, ok=True)
     track_event(db, event_type="face_scan_completed", application_id=app.id, detail={"mock": True})
+
+
+@callback_router.post("/api/journey/face-scan/callback")
+async def face_scan_callback(request: Request, key: str = "", db: Session = Depends(get_session)):
+    """PUBLIC webhook — NuralX POSTs the completed scan here. No session cookie (server-to-
+    server); auth is the shared ?key= secret. Correlate by client_transaction_ID -> the
+    FaceScanSession -> merge the adapted vitals/liveness into that application's bundle so
+    the UI's snapshot poll sees rppg_scan.status == 'available'. Always ACK 200 (§11)."""
+    secret = os.getenv("NURALX_CALLBACK_SECRET", "")
+    if not secret or key != secret:
+        return {"received": True}  # ACK but ignore a bad/missing secret
+
+    import json
+    from underwriting.sources import nuralx as nuralx_adapter
+    from .models import FaceScanSession
+
+    raw = await request.body()
+    try:
+        body = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {"received": True}
+
+    ctid = body.get("client_transaction_ID") or body.get("client_transaction_id")
+    fss = db.exec(
+        select(FaceScanSession).where(FaceScanSession.client_transaction_id == ctid)
+    ).first() if ctid else None
+    if fss is None:
+        return {"received": True}  # unknown/expired session — ACK, nothing to write
+
+    app = db.get(Application, fss.application_id)
+    if app is None:
+        return {"received": True}
+
+    is_failure = body.get("status") in ("timeout", "error") or not body.get("results")
+    signals = nuralx_adapter.to_signals(body)  # {rppg_scan, liveness_facematch, facial_bmi_smoking}
+
+    def add(bundle):
+        sig = bundle.setdefault("signals", {})
+        for k, v in signals.items():
+            sig[k] = v
+    _mutate_bundle(app, add)
+    fss.status = "TIMEOUT" if body.get("status") == "timeout" else ("ERROR" if is_failure else "COMPLETED")
+    fss.result = body if isinstance(body, dict) else {}
+    db.add(fss)
+    db.add(app)
+    track_api_call(db, provider="nuralx", endpoint="/callback", mode="real",
+                   application_id=app.id, ok=not is_failure,
+                   response_summary={"status": fss.status})
+    track_event(db, event_type="face_scan_completed", application_id=app.id,
+                detail={"status": fss.status, "mock": False})
+    return {"received": True}
 
 
 # ABHA linking follows the real ABDM handshake: the applicant provides their ABHA number
@@ -770,6 +824,7 @@ def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -
         "status": app.status,
         "applicant": application.get("applicant", {}) or {},
         "financial": application.get("financial", {}) or {},   # Step 3 pre-fill on revisit
+        "product": application.get("product", {}) or {},       # Step 7 amount-due fallback (?start=7 / refresh)
         "signals": {
             "pan_verify": signals.get("pan_verify", {}) or {},
             "mobile_intel": signals.get("mobile_intel", {}) or {},
@@ -1053,29 +1108,121 @@ class PaymentRequest(BaseModel):
     payment_mode: str = "upi"
 
 
-@router.post("/payment")
-def make_payment(req: PaymentRequest, request: Request, db: Session = Depends(get_session)) -> dict:
-    """Display-only mocked payment success. §64VB — risk cover starts only on premium
-    payment success; here we simulate success and mark the policy issued + free-look open.
-    NO real gateway (per the locked decision)."""
-    app = _require_app(request, req.app_id, db)
-    if app is None:
-        return {"success": False, "message": "unauthorized"}
-
+def _issue_policy(db: Session, app: Application, mode: str, note: str) -> str:
+    """Mark the app issued + stamp a policy number (§64VB: cover on payment success).
+    Shared by the mocked path and the verified-Razorpay path."""
     policy_no = "POL-" + uuid.uuid4().hex[:8].upper()
 
     def add(bundle):
         product = bundle.setdefault("application", {}).setdefault("product", {})
-        product["payment_mode"] = req.payment_mode
+        product["payment_mode"] = mode
         bundle.setdefault("_journey", {})["policy_number"] = policy_no
     _mutate_bundle(app, add)
     app.status = "issued"
     db.add(app)
     track_event(db, event_type="payment_success", application_id=app.id, actor="customer",
-                detail={"mode": req.payment_mode, "policy_number": policy_no,
-                        "note": "mock — no real gateway (§64VB cover on payment success)"})
+                detail={"mode": mode, "policy_number": policy_no, "note": note})
     track_event(db, event_type="policy_issued", application_id=app.id,
                 detail={"policy_number": policy_no})
+    return policy_no
+
+
+@router.post("/payment")
+def make_payment(req: PaymentRequest, request: Request, db: Session = Depends(get_session)) -> dict:
+    """Mocked payment success (fallback / demo without a live gateway). §64VB — risk cover
+    starts only on premium payment success; here we simulate success and mark issued."""
+    app = _require_app(request, req.app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+    policy_no = _issue_policy(db, app, req.payment_mode, "mock — no real gateway")
+    return {"success": True, "policy_number": policy_no}
+
+
+# ---- Razorpay (real, test-mode): create order -> Checkout.js -> verify signature -------
+def _rzp_keys() -> tuple[str, str]:
+    """(key_id, key_secret) for the active Razorpay mode (test|live)."""
+    if (os.getenv("RAZORPAY_MODE") or "test").lower() == "live":
+        return os.getenv("RAZORPAY_LIVE_KEY_ID", ""), os.getenv("RAZORPAY_LIVE_KEY_SECRET", "")
+    return os.getenv("RAZORPAY_TEST_KEY_ID", ""), os.getenv("RAZORPAY_TEST_KEY_SECRET", "")
+
+
+class PaymentOrderRequest(BaseModel):
+    app_id: int
+
+
+@router.post("/payment/order")
+def payment_order(req: PaymentOrderRequest, request: Request, db: Session = Depends(get_session)) -> dict:
+    """Create a real Razorpay order for the premium due. Returns {order_id, amount, key_id}
+    the browser hands to Checkout.js. Amount is the persisted product.premium, in paise."""
+    import httpx
+    app = _require_app(request, req.app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+    key_id, key_secret = _rzp_keys()
+    if not (key_id and key_secret):
+        return {"success": False, "message": "Payment gateway not configured."}
+
+    premium = (app.bundle.get("application", {}).get("product", {}) or {}).get("premium")
+    if not (isinstance(premium, (int, float)) and premium > 0):
+        return {"success": False, "message": "No premium on file — complete the product step first."}
+    amount_paise = int(round(float(premium) * 100))
+
+    t0 = time.time()
+    try:
+        r = httpx.post(
+            "https://api.razorpay.com/v1/orders",
+            auth=(key_id, key_secret),
+            json={"amount": amount_paise, "currency": "INR",
+                  "receipt": f"app-{app.id}", "notes": {"application_id": str(app.id)}},
+            timeout=30,
+        )
+        r.raise_for_status()
+        order = r.json()
+        track_api_call(db, provider="razorpay", endpoint="/v1/orders", mode="real",
+                       application_id=app.id, ok=True, latency_ms=int((time.time()-t0)*1000),
+                       response_summary={"order_id": order.get("id"), "amount": amount_paise})
+        return {"success": True, "order_id": order["id"], "amount": amount_paise,
+                "currency": "INR", "key_id": key_id}
+    except Exception as e:
+        track_api_call(db, provider="razorpay", endpoint="/v1/orders", mode="real",
+                       application_id=app.id, ok=False, latency_ms=int((time.time()-t0)*1000),
+                       error=str(e)[:200])
+        return {"success": False, "message": "Could not start payment — try again."}
+
+
+class PaymentVerifyRequest(BaseModel):
+    app_id: int
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+@router.post("/payment/verify")
+def payment_verify(req: PaymentVerifyRequest, request: Request, db: Session = Depends(get_session)) -> dict:
+    """Verify the Checkout.js success payload (HMAC-SHA256 of order_id|payment_id with the
+    key secret) BEFORE issuing. A forged/tampered signature is rejected — never trust the
+    client's word that payment succeeded."""
+    import hashlib
+    import hmac
+    app = _require_app(request, req.app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+    _, key_secret = _rzp_keys()
+    expected = hmac.new(
+        key_secret.encode(), f"{req.razorpay_order_id}|{req.razorpay_payment_id}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, req.razorpay_signature):
+        track_api_call(db, provider="razorpay", endpoint="verify", mode="real",
+                       application_id=app.id, ok=False, error="signature mismatch")
+        track_event(db, event_type="payment_verify_failed", application_id=app.id,
+                    detail={"payment_id": req.razorpay_payment_id})
+        return {"success": False, "message": "Payment verification failed."}
+
+    policy_no = _issue_policy(db, app, "razorpay", f"razorpay — {req.razorpay_payment_id}")
+    track_api_call(db, provider="razorpay", endpoint="verify", mode="real",
+                   application_id=app.id, ok=True,
+                   response_summary={"payment_id": req.razorpay_payment_id})
     return {"success": True, "policy_number": policy_no}
 
 

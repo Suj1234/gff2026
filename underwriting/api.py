@@ -15,6 +15,7 @@ Run:  uvicorn underwriting.api:app --reload
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from fastapi import FastAPI
@@ -25,7 +26,12 @@ from .nuralx_routes import router as nuralx_router
 from .report import build_report
 from .schemas import ProposalInput, ReportOutput
 
-app = FastAPI(title="Onboarding Risk Assessment", version="phase4")
+# Served behind the gateway at /demo/life. root_path lets every route (/api/...,
+# /health, the SPA) answer under that prefix without hardcoding it in each router.
+# Local dev leaves it empty → app runs at root. nginx passes the full path through.
+ROOT_PATH = os.getenv("ROOT_PATH", "")
+
+app = FastAPI(title="Onboarding Risk Assessment", version="phase4", root_path=ROOT_PATH)
 
 # Data-collection endpoints the journey calls before the single /underwrite (Phase B):
 #   - NuralX face-scan session + webhook  (rppg_scan / liveness_facematch / facial_bmi_smoking)
@@ -94,3 +100,33 @@ def underwrite(inp: ProposalInput) -> dict:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+# ── Serve the built React journey-ui (SPA) ─────────────────────────────────────
+# The Dockerfile copies the Vite build to ./journey-ui/dist. Registered LAST so all
+# API routes above win; only unmatched GETs fall through to the SPA.
+from pathlib import Path  # noqa: E402
+
+from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_UI_DIST = Path(__file__).resolve().parent.parent / "journey-ui" / "dist"
+
+if (_UI_DIST / "index.html").exists():
+    # Hashed JS/CSS/images built by Vite under /assets.
+    app.mount("/assets", StaticFiles(directory=str(_UI_DIST / "assets")), name="ui-assets")
+
+    _INDEX = _UI_DIST / "index.html"
+
+    @app.get("/")
+    def _spa_root() -> FileResponse:
+        return FileResponse(_INDEX)
+
+    # SPA fallback: any non-API GET returns index.html so client-side routing /
+    # page refreshes work. API paths are already matched by the routers above.
+    @app.get("/{full_path:path}")
+    def _spa_catch_all(full_path: str) -> FileResponse:
+        candidate = _UI_DIST / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)  # favicon.svg, etc. at the dist root
+        return FileResponse(_INDEX)

@@ -6,6 +6,7 @@ uvicorn           # Phase 4: ASGI server to run api:app
 httpx             # Phase 4: fastapi TestClient dependency (endpoint tests)
 requests          # bank_statement.py: iAdore bank-statement analysis API calls
 sqlmodel          # Phase C: journey/ DB layer (SQLite now, Postgres via DATABASE_URL); pulls SQLAlchemy
+psycopg2-binary   # Postgres driver for the Neon DATABASE_URL in prod (SQLite needs none)
 itsdangerous      # Phase C: signs the httpOnly server-session cookie (journey auth)
 python-multipart  # Phase C: FastAPI form / file-upload parsing (bank statement upload)
 jinja2            # Phase C: server-rendered journey templates

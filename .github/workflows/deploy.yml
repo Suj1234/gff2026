@@ -1,0 +1,47 @@
+name: Build & Deploy
+
+# Push to main -> the self-hosted runner (on the VPS) builds the image, pushes it
+# to Harbor, and recreates the gff2026 container. Secrets/callbacks live in
+# /opt/gff2026/.env on the server (never in git). See DEPLOYMENT.md.
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Harbor
+        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login harbor.hinagro.com -u "${{ secrets.HARBOR_USERNAME }}" --password-stdin
+
+      - name: Build Docker image
+        run: docker build -t gff2026:latest .
+
+      - name: Tag image for Harbor
+        run: docker tag gff2026:latest harbor.hinagro.com/insurance/gff2026:latest
+
+      - name: Push image to Harbor
+        run: docker push harbor.hinagro.com/insurance/gff2026:latest
+
+      - name: Stop and remove old container
+        run: |
+          docker rm -f gff2026 || true
+          # Free port 8899 in case an orphan/differently-named container holds it
+          docker ps -q --filter "publish=8899" | xargs -r docker rm -f
+
+      - name: Run new container
+        run: |
+          docker run -d \
+            --name gff2026 \
+            --restart unless-stopped \
+            --network demo-net \
+            -p 8899:8899 \
+            -e ROOT_PATH=/demo/life \
+            --env-file /opt/gff2026/.env \
+            harbor.hinagro.com/insurance/gff2026:latest
