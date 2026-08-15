@@ -14,6 +14,7 @@ import { PaymentStep } from "./PaymentStep"
 import { PremiumBar } from "./PremiumBar"
 import { AgentRail } from "./AgentRail"
 import { RailSheet } from "./RailSheet"
+import { slugToStep, stepToPath } from "./steps"
 import { ShieldCheck, Question } from "@phosphor-icons/react"
 
 // The console shell drives all 7 journey steps. Each step declares its title, sub-steps,
@@ -43,10 +44,30 @@ function coverSummary(p: ProductState): string {
 
 export function Console({ appId, variant }: { appId: number | null; variant: Variant }) {
   const { snap } = useAppSnapshot(appId)
-  // ?start=N (demo/dev) lands the console directly on a step and unlocks up to it.
-  const startStep = Math.min(7, Math.max(1, Number(new URLSearchParams(window.location.search).get("start")) || 1))
-  const [step, setStep] = useState(startStep)     // 1-indexed active step
+  // Initial step: URL path (/demo/life/health) first, then ?start=N (demo/dev), else 1.
+  // Either way it lands the console on that step and unlocks up to it.
+  const startStep = slugToStep(window.location.pathname)
+    || Math.min(7, Math.max(1, Number(new URLSearchParams(window.location.search).get("start")) || 1))
+  const [step, setStepState] = useState(startStep)     // 1-indexed active step
   const [maxReached, setMaxReached] = useState(startStep)  // furthest step unlocked (for sidebar jump-back)
+
+  // Change step AND the URL together, so each step is its own history entry (Back/Forward
+  // walks the journey) and the path names the page. replace=true for the initial URL sync.
+  const setStep = (n: number, replace = false) => {
+    setStepState(n)
+    const path = stepToPath(n)
+    if (window.location.pathname !== path) {
+      replace ? window.history.replaceState(null, "", path) : window.history.pushState(null, "", path)
+    }
+  }
+  // Name the current step in the URL on first paint (covers ?start=N / a bare console boot).
+  useEffect(() => { setStep(startStep, true) }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  // Browser Back/Forward -> sync the view to the URL (only to an unlocked step).
+  useEffect(() => {
+    const onPop = () => { const n = slugToStep(window.location.pathname); if (n && n <= maxReached) setStepState(n) }
+    window.addEventListener("popstate", onPop)
+    return () => window.removeEventListener("popstate", onPop)
+  }, [maxReached])
   const [saving, setSaving] = useState(false)
   const rail = useRail(appId, step)
   void variant
@@ -82,9 +103,10 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
     prefilled.current = true
   }, [snap])
 
-  if (!snap) {
-    return <div className="min-h-[100dvh] grid place-items-center text-muted-foreground">Loading application…</div>
-  }
+  // No snapshot yet -> render the REAL shell in a loading state (same header/sidebar/grid/
+  // rail as below, gray placeholders in the center). Identical components + grid classes =>
+  // zero layout shift when data lands. Also used by TransitionLoader (App shows it pre-appId).
+  if (!snap) return <ConsoleShell loading />
 
   const meta = STEP_META[step - 1]
 
@@ -251,6 +273,84 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
       </div>
 
       <RailSheet rail={rail} />
+    </div>
+  )
+}
+
+// Loading shell — the SAME header / StepSidebar / center grid / AgentRail frame as the real
+// Console, with gray placeholder bars where the step content will land. Because it reuses the
+// exact components + grid classes, swapping to the real page causes ZERO layout shift.
+const SkBar = ({ w, h = "h-3" }: { w: string; h?: string }) =>
+  <div className={`${h} ${w} rounded-md bg-black/[0.06] animate-pulse`} />
+
+export function ConsoleShell({ loading }: { loading?: boolean }) {
+  void loading
+  return (
+    <div className="min-h-[100dvh] flex flex-col bg-background">
+      {/* HEADER — identical structure/height to the real one. */}
+      <header className="flex items-center gap-3 px-6 lg:px-8 h-14 bg-card border-b shrink-0 sticky top-0 z-30">
+        <span className="grid place-items-center size-7 rounded-lg bg-primary text-primary-foreground">
+          <ShieldCheck weight="fill" className="size-4" />
+        </span>
+        <span className="text-[15px] font-extrabold tracking-tight">Acme Life Insurance</span>
+        <span className="ml-auto text-xs text-muted-foreground animate-pulse">Preparing your application…</span>
+      </header>
+
+      <div className="flex-1 flex min-h-0">
+        {/* SIDEBAR skeleton — same width/position as StepSidebar, gray rows (no labels). */}
+        <nav className="hidden lg:block w-80 xl:w-96 shrink-0 p-5 self-start sticky top-14 space-y-4">
+          <div className="rounded-2xl elev-card p-4 space-y-5">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <div key={i} className="flex gap-3">
+                <div className="size-7 rounded-full bg-black/[0.06] animate-pulse shrink-0" />
+                <div className="flex-1 space-y-1.5 pt-0.5"><SkBar w="w-12" h="h-2" /><SkBar w="w-28" /></div>
+              </div>
+            ))}
+          </div>
+        </nav>
+
+        <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_400px] gap-5 p-4 sm:p-5 lg:pl-0 pb-24 md:pb-5">
+          <main className="min-w-0">
+            <div className="rounded-2xl elev-card overflow-hidden">
+              <div className="hidden md:block px-6 lg:px-8 pt-5">
+                <SkBar w="w-44" h="h-5" />
+                <div className="mt-2"><SkBar w="w-64" h="h-3" /></div>
+                <div className="mt-5 border-b" />
+              </div>
+              <div className="px-4 sm:px-6 lg:px-8 py-6 space-y-5">
+                <div className="rounded-xl bg-[#faf9f7] p-4 space-y-3">
+                  <SkBar w="w-24" />
+                  <SkBar w="w-52" h="h-6" />
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-12 rounded-lg bg-black/[0.04] animate-pulse" />)}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="h-32 rounded-xl bg-[#faf9f7] animate-pulse" />
+                  <div className="h-32 rounded-xl bg-[#faf9f7] animate-pulse" />
+                </div>
+              </div>
+              <div className="border-t px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
+                <SkBar w="w-12" h="h-4" />
+                <div className="h-10 w-40 rounded-md bg-black/[0.06] animate-pulse" />
+              </div>
+            </div>
+          </main>
+
+          {/* RAIL skeleton — same card frame as AgentRail, gray placeholders (no labels). */}
+          <aside className="hidden md:block shrink-0 self-start sticky top-14">
+            <div className="rounded-2xl border bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-5 space-y-4">
+              <div className="flex items-center gap-4">
+                <div className="size-[72px] rounded-full bg-black/[0.06] animate-pulse shrink-0" />
+                <div className="flex-1 space-y-2"><SkBar w="w-20" h="h-2" /><SkBar w="w-28" h="h-4" /></div>
+              </div>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="space-y-1.5 pt-1"><SkBar w="w-32" /><SkBar w="w-full" h="h-2" /></div>
+              ))}
+            </div>
+          </aside>
+        </div>
+      </div>
     </div>
   )
 }
