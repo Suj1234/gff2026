@@ -26,21 +26,26 @@ from .nuralx_routes import router as nuralx_router
 from .report import build_report
 from .schemas import ProposalInput, ReportOutput
 
-# Served behind the gateway at /demo/life. root_path lets every route (/api/...,
-# /health, the SPA) answer under that prefix without hardcoding it in each router.
-# Local dev leaves it empty → app runs at root. nginx passes the full path through.
-ROOT_PATH = os.getenv("ROOT_PATH", "")
+# Served behind the gateway at /demo/life. We MOUNT the whole app under that prefix
+# so every route answers at /demo/life/... — exactly like india-health's Next.js
+# basePath. nginx forwards the path UNCHANGED (no strip rule needed). root_path does
+# NOT make routes match a prefix — mounting does. Local dev: BASE_PATH="" → root.
+BASE_PATH = os.getenv("BASE_PATH", os.getenv("ROOT_PATH", "")).rstrip("/")
 
-app = FastAPI(title="Onboarding Risk Assessment", version="phase4", root_path=ROOT_PATH)
+# `app` is what uvicorn serves. `inner` is where every route/router/mount is attached.
+# When BASE_PATH is set, `inner` is mounted onto `app` at that prefix (see bottom).
+app = FastAPI(title="Onboarding Risk Assessment", version="phase4")
+inner = FastAPI(title="Onboarding Risk Assessment", version="phase4") if BASE_PATH else app
 # Behind the HTTPS proxy, Starlette's automatic trailing-slash 307 (e.g. /demo/life
 # -> /demo/life/) breaks. Serve both forms directly instead of redirecting.
 app.router.redirect_slashes = False
+inner.router.redirect_slashes = False
 
 # Data-collection endpoints the journey calls before the single /underwrite (Phase B):
 #   - NuralX face-scan session + webhook  (rppg_scan / liveness_facematch / facial_bmi_smoking)
 #   - mock ABHA health-records fetch       (abha_health_records → R-010 / POSTPONE)
-app.include_router(nuralx_router)
-app.include_router(abha_router)
+inner.include_router(nuralx_router)
+inner.include_router(abha_router)
 
 # Phase C — the journey (DB-backed UI + tracking) mounted into the same app so the
 # whole demo runs on ONE command. This is web plumbing only; the engine (rules/
@@ -57,11 +62,11 @@ try:
     def _journey_startup() -> None:
         init_db()  # create_all — idempotent
 
-    app.include_router(journey_auth_router)
-    app.include_router(journey_step_router)
-    app.include_router(journey_callback_router)
-    app.include_router(journey_ui_router)
-    mount_static(app)
+    inner.include_router(journey_auth_router)
+    inner.include_router(journey_step_router)
+    inner.include_router(journey_callback_router)
+    inner.include_router(journey_ui_router)
+    mount_static(inner)
 except ImportError:
     # journey/ deps not installed → the engine API still runs standalone.
     pass
@@ -83,7 +88,7 @@ def _status(report: ReportOutput) -> str:
     return "pending" if verdict in _PENDING_VERDICTS else "complete"
 
 
-@app.post("/underwrite")
+@inner.post("/underwrite")
 def underwrite(inp: ProposalInput) -> dict:
     """Underwrite one proposal → the full report object.
 
@@ -100,7 +105,7 @@ def underwrite(inp: ProposalInput) -> dict:
     return out
 
 
-@app.get("/health")
+@inner.get("/health")
 def health() -> dict:
     return {"status": "ok"}
 
@@ -117,23 +122,31 @@ _UI_DIST = Path(__file__).resolve().parent.parent / "journey-ui" / "dist"
 
 if (_UI_DIST / "index.html").exists():
     # Hashed JS/CSS/images built by Vite under /assets.
-    app.mount("/assets", StaticFiles(directory=str(_UI_DIST / "assets")), name="ui-assets")
+    inner.mount("/assets", StaticFiles(directory=str(_UI_DIST / "assets")), name="ui-assets")
 
     _INDEX = _UI_DIST / "index.html"
 
     # Serve the SPA at BOTH the bare root ("" -> /demo/life) and the slashed root
     # ("/" -> /demo/life/) directly, so neither one 307-redirects (that breaks
     # behind the HTTPS proxy — redirect_slashes is off above).
-    @app.get("")
-    @app.get("/")
+    @inner.get("")
+    @inner.get("/")
     def _spa_root() -> FileResponse:
         return FileResponse(_INDEX)
 
     # SPA fallback: any other non-API GET returns index.html so client-side routing
     # / page refreshes work. API paths are matched by the routers above and win.
-    @app.get("/{full_path:path}")
+    @inner.get("/{full_path:path}")
     def _spa_catch_all(full_path: str) -> FileResponse:
         candidate = _UI_DIST / full_path
         if candidate.is_file():
             return FileResponse(candidate)  # favicon.svg, etc. at the dist root
         return FileResponse(_INDEX)
+
+
+# ── Mount the whole app under the base path ────────────────────────────────────
+# Everything above is attached to `inner`. Mount it at /demo/life so every route
+# answers at that prefix (nginx forwards unchanged — same model as india-health).
+# BASE_PATH empty (local dev) → inner IS app, nothing to mount.
+if BASE_PATH:
+    app.mount(BASE_PATH, inner)

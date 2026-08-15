@@ -42,6 +42,6 @@ jobs:
             --restart unless-stopped \
             --network demo-net \
             -p 8899:8899 \
-            -e ROOT_PATH=/demo/life \
+            -e BASE_PATH=/demo/life \
             --env-file /opt/gff2026/.env \
             harbor.hinagro.com/insurance/gff2026:latest
