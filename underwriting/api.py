@@ -32,6 +32,9 @@ from .schemas import ProposalInput, ReportOutput
 ROOT_PATH = os.getenv("ROOT_PATH", "")
 
 app = FastAPI(title="Onboarding Risk Assessment", version="phase4", root_path=ROOT_PATH)
+# Behind the HTTPS proxy, Starlette's automatic trailing-slash 307 (e.g. /demo/life
+# -> /demo/life/) breaks. Serve both forms directly instead of redirecting.
+app.router.redirect_slashes = False
 
 # Data-collection endpoints the journey calls before the single /underwrite (Phase B):
 #   - NuralX face-scan session + webhook  (rppg_scan / liveness_facematch / facial_bmi_smoking)
@@ -118,12 +121,16 @@ if (_UI_DIST / "index.html").exists():
 
     _INDEX = _UI_DIST / "index.html"
 
+    # Serve the SPA at BOTH the bare root ("" -> /demo/life) and the slashed root
+    # ("/" -> /demo/life/) directly, so neither one 307-redirects (that breaks
+    # behind the HTTPS proxy — redirect_slashes is off above).
+    @app.get("")
     @app.get("/")
     def _spa_root() -> FileResponse:
         return FileResponse(_INDEX)
 
-    # SPA fallback: any non-API GET returns index.html so client-side routing /
-    # page refreshes work. API paths are already matched by the routers above.
+    # SPA fallback: any other non-API GET returns index.html so client-side routing
+    # / page refreshes work. API paths are matched by the routers above and win.
     @app.get("/{full_path:path}")
     def _spa_catch_all(full_path: str) -> FileResponse:
         candidate = _UI_DIST / full_path
