@@ -32,11 +32,28 @@ def _headers() -> dict[str, str]:
     return {"x-api-key": os.getenv("DIGILOCKER_API_KEY", ""), "Content-Type": "application/json"}
 
 
+def callback_url() -> str:
+    """The DigiLocker return URL. Precedence:
+      1. DIGILOCKER_REDIRECT_URL — explicit override. PROD sets this to the exact
+         /demo/life/digilocker/callback URL; that value wins so prod is never touched.
+      2. UI_ORIGIN — LOCAL dev only: the browser must return to the SAME origin the
+         session cookie lives on (the Vite UI, :5173), not the backend (:8899), or the
+         cookie isn't sent and the KYC pull loses the session. Vite proxies the callback
+         path back to :8899 (vite.config.ts). Prod has ONE origin, so UI_ORIGIN is unset
+         there and this branch never runs.
+      3. PUBLIC_API_URL — same-origin fallback (also correct in prod's single-origin case).
+    """
+    explicit = os.getenv("DIGILOCKER_REDIRECT_URL")
+    if explicit:
+        return explicit
+    origin = (os.getenv("UI_ORIGIN") or os.getenv("PUBLIC_API_URL")
+              or "http://localhost:5173").rstrip("/")
+    return f"{origin}/digilocker/callback"
+
+
 def link(*, oauth_state: str, case_id: str, redirect_url: str | None = None) -> dict:
     """Call 1 — get the DigiLocker consent link + accessRequestId (returned as requestId)."""
-    redirect_url = redirect_url or os.getenv(
-        "DIGILOCKER_REDIRECT_URL", "http://127.0.0.1:8000/digilocker/callback"
-    )
+    redirect_url = redirect_url or callback_url()
     body = {
         "redirectUrl": redirect_url,
         "oAuthState": oauth_state,

@@ -1,0 +1,399 @@
+{
+  "report": {
+    "companyDetails": {
+      "gstNumber": "",
+      "dateOfIncorporation": "",
+      "companyDirector": "",
+      "isHazardousBusiness": false,
+      "companyName": "",
+      "errorMessage": "",
+      "typeOfFirm": "",
+      "aggregateTurnOverFY": "",
+      "aggregateTurnOver": "",
+      "businessType": "",
+      "companyRegisteredAddress": ""
+    },
+    "contactability": {
+      "mobileDetails": {
+        "mobiles": "",
+        "mobileNumber": {
+          "number": "",
+          "simActivationDate": "",
+          "connectionType": "",
+          "networkLocation": "",
+          "status": ""
+        },
+        "alternateMobileNumber": {
+          "number": "",
+          "simActivationDate": "",
+          "connectionType": "",
+          "networkLocation": "",
+          "status": ""
+        }
+      },
+      "adddressAsPerRecords": {
+        "addresses": ""
+      },
+      "errorMessage": "",
+      "emailDetails": {
+        "emails": {
+          "email": ""
+        }
+      }
+    },
+    "crossAnalysis": {
+      "safetyScoring": {
+        "finalWeightedSafetyScore": 70,
+        "finalRisk": "Low Risk"
+      },
+      "errorMessage": "",
+      "litigationDetails": {
+        "casesAsPetitioner": "--",
+        "casesAsRespondent": "--"
+      },
+      "triggers": {
+        "dobMatch": "NA",
+        "politicallyExposed": "NA",
+        "kycVerification": "NA",
+        "nameMisMatch": "NA",
+        "addressMatch": "NA"
+      }
+    },
+    "financialEvaluation": {
+      "surrogateIncome": {
+        "creditBureau": {
+          "creditScore": "",
+          "activeCreditCards": "--",
+          "overDue": "",
+          "monthlyObligations": "",
+          "estimatedIncome": "NA",
+          "activeAccounts": ""
+        },
+        "vehicleDetails": {
+          "rcStatus": "NA",
+          "cost": "NA",
+          "surrogateIncome": "NA",
+          "registrationNumber": "NA",
+          "maker": "NA",
+          "manufacturedYear": "--",
+          "make": "NA",
+          "vehicleType": "NA"
+        }
+      },
+      "ITRdetails": {
+        "periodOfItrStatements": ""
+      },
+      "bankStatementAnalysis": {
+        "monthlyObligations": "--",
+        "credits": {
+          "rentalIncome": {
+            "amount": "",
+            "regularity": "",
+            "frequency": ""
+          },
+          "investedIncome": {
+            "amount": "",
+            "regularity": "",
+            "frequency": ""
+          },
+          "salary": {
+            "amount": "",
+            "regularity": "",
+            "frequency": ""
+          }
+        },
+        "debits": {
+          "emiPayment": {
+            "amount": "",
+            "regularity": "",
+            "frequency": ""
+          },
+          "investmentExpense": {
+            "amount": "",
+            "regularity": "",
+            "frequency": ""
+          },
+          "rentPayment": {
+            "amount": "",
+            "regularity": "",
+            "frequency": ""
+          },
+          "creditCardExpense": {
+            "amount": "",
+            "regularity": "",
+            "frequency": ""
+          }
+        },
+        "averageMonthlyBalance": "₹594805.92",
+        "obligationToIncomeRatio": "0%",
+        "imputedAnnualIncome": "₹21813750.00",
+        "monthlyIncome": "₹1817812.50",
+        "physicalAssets": "Customer owns a Vehicle"
+      },
+      "form26ASDetails": {
+        "quarterlyIncomeDetails": "",
+        "personalInfo": {
+          "address": "",
+          "dob": "",
+          "name": "",
+          "emailId": "",
+          "mobileNo": "",
+          "pan": "",
+          "panStatus": ""
+        },
+        "tdsSummaryDetails": "",
+        "gst3BTurnOverDetails": ""
+      },
+      "errorMessage": "",
+      "itrvDetails": {
+        "personalInfo": {
+          "address": "",
+          "name": "",
+          "pan": ""
+        },
+        "itrvInfo": {
+          "selfAssessmentTax": "",
+          "deductionsUnderChapter6A": "",
+          "tds": "",
+          "taxPayable": "",
+          "taxPayableOrRefundable": "",
+          "totalInterestAndFeePayable": "",
+          "agriculture": "",
+          "taxesPaid": "",
+          "currentYearLoss": "",
+          "totalTaxPaid": "",
+          "others": "",
+          "interestPayable": "",
+          "interestPayableTotal": "",
+          "period": "",
+          "formType": "",
+          "dividendTaxPayable": "",
+          "advanceTax": "",
+          "tcs": "",
+          "bookProfitUnderMAT": "",
+          "adjustedTotalIncomeUnderAMT": "",
+          "totalIncome": "",
+          "netTaxPayable": "",
+          "grossTotalIncome": "",
+          "totalTaxAndInterestPayable": "",
+          "refund": ""
+        }
+      },
+      "form16Details": "",
+      "COI": "",
+      "gstDetails": {
+        "gstr3bTotalTaxList": {
+          "taxableValue": "",
+          "returnPeriod": ""
+        },
+        "taxpayerInformation": {
+          "legalName": "--",
+          "lastUpdatedDate": "--",
+          "tradeName": "--",
+          "natureOfBusinessActivity": "--",
+          "constitutionOfBusiness": "--",
+          "dateOfRegistration": "--",
+          "gstnStatus": "--",
+          "principalPlaceOfBusiness": "--",
+          "natureOfBusiness": "--",
+          "gstin": "--",
+          "dateOfCancellation": "--",
+          "stateJurisdiction": "--"
+        },
+        "gstr3bTotalTaxableValueList": {
+          "taxableValue": "",
+          "returnPeriod": ""
+        }
+      }
+    },
+    "productDetails": {
+      "sumAssured": "--",
+      "premium": "--",
+      "applicationNumber": "--",
+      "applicantName": "",
+      "paymentFrequency": "--",
+      "productName": "--"
+    },
+    "medicalEvaluation": {
+      "warningMessages": {
+        "warningMessage": ""
+      },
+      "bp": "--",
+      "bmi": "--"
+    },
+    "occupationEvaluation": {
+      "errorMessage": "",
+      "occupationalDetail": {
+        "dateOfJoining": "--",
+        "orgName": "--",
+        "isCurrentOrg": "--",
+        "industry": "",
+        "experience": "--"
+      }
+    },
+    "existingInsurance": {
+      "insurances": {
+        "insurance": [
+          {
+            "premium": "NA",
+            "company": "NA",
+            "type": "Health",
+            "frequency": "NA"
+          },
+          {
+            "premium": "NA",
+            "company": "NA",
+            "type": "Life",
+            "frequency": "NA"
+          },
+          {
+            "premium": "NA",
+            "company": "NA",
+            "type": "Vehicle",
+            "frequency": "NA"
+          },
+          {
+            "premium": "NA",
+            "company": "NA",
+            "type": "General",
+            "frequency": "NA"
+          },
+          {
+            "premium": "NA",
+            "company": "NA",
+            "type": "Home",
+            "frequency": "NA"
+          },
+          {
+            "premium": "NA",
+            "company": "NA",
+            "type": "Others",
+            "frequency": "NA"
+          }
+        ]
+      }
+    },
+    "lifestyleAnalysis": {
+      "riskSpends": "₹0(0.00% of Income)",
+      "medicalSpends": "₹0(0.00% of Income)",
+      "wellnessSpends": "₹0(0.00% of Income)"
+    },
+    "companyAlerts": {
+      "mediumAlerts": "NA",
+      "severeAlerts": "NA",
+      "lowAlerts": "NA",
+      "errorMessage": "",
+      "highAlerts": "NA"
+    },
+    "xmlns:func": "http://exslt.org/functions",
+    "xmlns:xs": "http://www.w3.org/2001/XMLSchema",
+    "identityChecks": {
+      "emailFraud": false,
+      "dobMatch": false,
+      "pepDetails": {
+        "matchFound": false
+      },
+      "kycVerified": true,
+      "caMembershipDetails": "NA",
+      "liveness": "--",
+      "errorMessage": "",
+      "faceMatch": {
+        "score": "NA",
+        "match": "NA"
+      },
+      "addressMatch": "NA",
+      "panCompliance": {
+        "number": "",
+        "aadhaarLinkStatus": "",
+        "complianceStatus": "",
+        "age": "",
+        "panAllotmentDate": "",
+        "status": ""
+      },
+      "nameMatch": "NA",
+      "isAadhaarLinked": ""
+    },
+    "customerDetails": {
+      "creditScore": "",
+      "education": "--",
+      "address": "",
+      "gender": "--",
+      "declaredIncome": "NA",
+      "familyConstruct": "--",
+      "occupationType": "",
+      "lifeStage": "--",
+      "dob": "--",
+      "name": "",
+      "location": "--",
+      "age": "--",
+      "maritalStatus": "--"
+    },
+    "companyManagementInformation": {
+      "errorMessage": "",
+      "directorDetails": {
+        "companyDirectors": ""
+      }
+    },
+    "kycDetails": {
+      "aadhaarDetails": {
+        "fatherName": "",
+        "address": "",
+        "gender": "",
+        "dob": "",
+        "idCardNumber": "",
+        "name": ""
+      },
+      "dlDetails": {
+        "expiryDate": "",
+        "issuedDate": "",
+        "address": "",
+        "relationName": "",
+        "pin": "",
+        "dob": "",
+        "idCardNumber": "",
+        "name": ""
+      },
+      "panDetails": {
+        "address": "--",
+        "gender": "",
+        "dob": "",
+        "idCardNumber": "",
+        "name": ""
+      },
+      "errorMessage": "",
+      "passportDetails": {
+        "expiryDate": "",
+        "issuedDate": "",
+        "surName": "",
+        "dob": "",
+        "idCardNumber": "",
+        "name": "",
+        "issuedPlace": ""
+      },
+      "voterIdDetails": {
+        "address": "--",
+        "gender": "",
+        "dob": "",
+        "idCardNumber": "",
+        "name": ""
+      }
+    },
+    "litigationAndFirDetails": {
+      "criminalCases": "",
+      "cases": "",
+      "pendingCases": "",
+      "disposedCases": "",
+      "litigationStatistics": {
+        "civilAsPetitionerCount": "",
+        "criminalAsPetitionerCount": "",
+        "totalCasesAsRespondentCount": "",
+        "disposalStatusAgainstLifeAssuredCount": "",
+        "criminalAsRespondentCount": "",
+        "civilAsRespondentCount": "",
+        "totalCasesAsPetitionerCount": ""
+      },
+      "notAvailableCases": "",
+      "totalCases": ""
+    }
+  }
+}

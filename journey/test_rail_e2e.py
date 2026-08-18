@@ -112,8 +112,11 @@ def test_full_walk_rail_is_live_and_matches_decision():
     assert s1, "rail returned no groups on a live session"
     assert "identity_kyc" in s1 and "litigation_fir" in s1, sorted(s1)
     assert "financial" not in s1 and "medical" not in s1 and "lifestyle" not in s1, sorted(s1)
-    # litigation not fetched yet -> idle, not a green pass it hasn't earned
-    assert s1["litigation_fir"]["severity"] == "idle", s1["litigation_fir"]
+    # Mobile->PAN now REQUESTS litigation (include* flags), so for the litigation persona
+    # (9739780007 = Paulson, 10 criminal cases) it comes back at the gate and the chip is
+    # already assessed-adverse at Step 1 — not idle. If this env has no live MOBILE_PAN
+    # gateway, the fetch is skipped and it stays idle; accept BOTH (the fetch is real-vendor).
+    assert s1["litigation_fir"]["severity"] in ("bad", "warn", "idle"), s1["litigation_fir"]
 
     # -- Step 5 (decision) shows the full accumulated read: all 11 groups --
     g0 = _by_group(_rail(c, app_id, step=5))

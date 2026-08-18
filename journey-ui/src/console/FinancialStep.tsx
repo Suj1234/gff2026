@@ -29,6 +29,16 @@ export function FinancialStep({
 }) {
   const set = (patch: Partial<FinancialState>) => onChange({ ...value, ...patch })
 
+  // Persist declared income on blur so the agent rail's declared-vs-imputed gap fires live,
+  // not only after Continue. /financial accepts a partial (all fields optional).
+  const saveIncome = () => {
+    if (appId == null || !value.declared_annual_income) return
+    fetch("/api/journey/financial", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ app_id: appId, declared_annual_income: value.declared_annual_income }),
+    }).catch(() => {})
+  }
+
   return (
     <div className="space-y-8">
       {/* Income + source/purpose — the ONE editable region, held in a single bordered card */}
@@ -45,6 +55,7 @@ export function FinancialStep({
               <input inputMode="numeric" autoFocus placeholder="Annual income"
                 value={value.declared_annual_income ? value.declared_annual_income.toLocaleString("en-IN") : ""}
                 onChange={(e) => set({ declared_annual_income: Math.min(Number(e.target.value.replace(/[^\d]/g, "")), 1_000_000_000) })}
+                onBlur={saveIncome}
                 className="w-full min-w-0 px-3 h-11 text-[14px] font-semibold outline-none bg-white tabular-nums" />
               <span className="grid place-items-center px-3 text-[12px] text-muted-foreground bg-muted border-l">/yr</span>
             </div>
@@ -111,6 +122,8 @@ function BankStatement({ appId, snap, declared }: { appId: number | null; snap: 
               <div className="text-[12px] text-muted-foreground truncate">{fileName || "Read for imputed income, average balance and salary credits."}</div>
             </div>
             <span className="inline-flex items-center gap-1 rounded-full stat-ok border px-2 py-0.5 text-[11px] font-semibold shrink-0"><Check weight="bold" className="size-3" /> Done</span>
+            <button type="button" onClick={() => inputRef.current?.click()}
+              className="text-[12px] font-semibold text-primary hover:underline shrink-0">Replace</button>
           </div>
         ) : (
           <div className="flex items-start gap-3">

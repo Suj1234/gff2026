@@ -96,6 +96,40 @@ export function healthPayload(h: HealthState) {
   }
 }
 
+// Inverse of healthPayload: rebuild HealthState from the saved /api/journey/app payload so
+// a revisit prefills what the applicant already declared (form ⇄ rail stay in sync). Best-effort
+// — parses the "Name — since YYYY, controlled, note" condition strings back into the picker.
+type HealthPayload = {
+  conditions?: string[]; height_cm?: number | null; weight_kg?: number | null
+  tobacco?: boolean; alcohol?: boolean; drugs?: boolean
+  ongoing_medication?: string | null; past_medical_history?: string | null
+  family_history?: string[]
+}
+export function healthFromPayload(p: HealthPayload): HealthState {
+  const conditions: Record<string, ConditionDetail> = {}
+  for (const raw of p.conditions || []) {
+    const [namePart, detailPart = ""] = raw.split(/\s+—\s+/, 2)
+    // Match the ticked chip to a known condition label (else drop under "Other").
+    const name = MEDICAL_CONDITIONS.find((c) => c.toLowerCase() === namePart.trim().toLowerCase()) || "Other"
+    const year = (detailPart.match(/since\s+(\d{4})/) || [])[1] || ""
+    const controlled: ConditionDetail["controlled"] =
+      /\bnot controlled\b/.test(detailPart) ? "no" : /\bcontrolled\b/.test(detailPart) ? "yes" : ""
+    const note = detailPart.replace(/since\s+\d{4},?\s*/, "").replace(/\b(not )?controlled\b,?\s*/, "").trim()
+    conditions[name] = { year, controlled, note }
+  }
+  const screeners: Record<string, boolean> = {}
+  if (Object.keys(conditions).length) screeners["major_illness"] = true
+  if (p.ongoing_medication) screeners["medication"] = true
+  return {
+    ...emptyHealth,
+    conditions, screeners,
+    height_cm: p.height_cm ?? "",
+    weight_kg: p.weight_kg ?? "",
+    tobacco: !!p.tobacco, alcohol: !!p.alcohol, drugs: !!p.drugs,
+    family_history: p.family_history || [],
+  }
+}
+
 const bmiOf = (h: number | "", w: number | ""): number | null => {
   if (!h || !w) return null
   const m = Number(h) / 100
@@ -134,8 +168,16 @@ export function HealthStep({
   const visible = visibleHealthSubSteps(value)
   const active = visible[Math.min(subStep, visible.length - 1)]?.key ?? "health"
 
-  const setScreener = (id: string, v: boolean) =>
-    set({ screeners: { ...value.screeners, [id]: v } })
+  const setScreener = (id: string, v: boolean) => {
+    const patch: Partial<HealthState> = { screeners: { ...value.screeners, [id]: v } }
+    // Answering No must retract what a Yes revealed — else the conditions/detail persist and
+    // keep scoring even though the screener now reads No (the form ⇄ score mismatch).
+    if (!v) {
+      if (id === "major_illness") patch.conditions = {}
+      patch.screenerDetail = { ...value.screenerDetail, [id]: "" }
+    }
+    set(patch)
+  }
   const setDetail = (id: string, text: string) =>
     set({ screenerDetail: { ...value.screenerDetail, [id]: text } })
   const toggleCondition = (name: string) => {

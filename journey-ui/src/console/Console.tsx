@@ -7,7 +7,7 @@ import { MobileStepHeader } from "./MobileStepHeader"
 import { IdentityCenter } from "./IdentityCenter"
 import { ProductStep, type ProductState, type PremiumSummary } from "./ProductStep"
 import { FinancialStep, type FinancialState } from "./FinancialStep"
-import { HealthStep, type HealthState, emptyHealth, healthPayload, visibleHealthSubSteps } from "./HealthStep"
+import { HealthStep, type HealthState, emptyHealth, healthPayload, healthFromPayload, visibleHealthSubSteps } from "./HealthStep"
 import { DecisionStep } from "./DecisionStep"
 import { NomineeStep, type Nominee, emptyNominee, nomineePayload, shareTotal } from "./NomineeStep"
 import { PaymentStep } from "./PaymentStep"
@@ -15,7 +15,7 @@ import { PremiumBar } from "./PremiumBar"
 import { AgentRail } from "./AgentRail"
 import { RailSheet } from "./RailSheet"
 import { slugToStep, stepToPath } from "./steps"
-import { ShieldCheck, Question } from "@phosphor-icons/react"
+import { ShieldCheck } from "@phosphor-icons/react"
 
 // The console shell drives all 7 journey steps. Each step declares its title, sub-steps,
 // center panel, and a save() that POSTs to its endpoint before advancing. Continue advances
@@ -23,7 +23,7 @@ import { ShieldCheck, Question } from "@phosphor-icons/react"
 type Variant = "teal" | "light"
 
 const STEP_META: { title: string; desc: string; subSteps: string[]; cta: string }[] = [
-  { title: "Identity & KYC", desc: "Confirm the applicant's identity, add an email, and verify Aadhaar.", subSteps: ["Profile", "Aadhaar", "Consent"], cta: "Continue to Product" },
+  { title: "Identity & KYC", desc: "Confirm the applicant's identity, add an email, and verify Aadhaar.", subSteps: [], cta: "Continue to Product" },
   { title: "Product & Cover", desc: "Choose the plan, cover amount, policy term, and any riders.", subSteps: [], cta: "Continue to Financial" },
   { title: "Financial", desc: "Declared income and source of funds.", subSteps: [], cta: "Continue to Health" },
   { title: "Health", desc: "Health declaration, lifestyle, and a live face scan.", subSteps: ["Health", "Vitals & lifestyle", "Face scan & ABHA"], cta: "Continue to Decision" },
@@ -31,6 +31,19 @@ const STEP_META: { title: string; desc: string; subSteps: string[]; cta: string 
   { title: "Nominee", desc: "Who receives the benefit.", subSteps: ["Nominee"], cta: "Continue to Payment" },
   { title: "Payment", desc: "Complete the premium payment to issue the policy.", subSteps: ["Payment"], cta: "Issue policy" },
 ]
+
+// created_at is UTC (from the DB). Render exact date + time in IST (Asia/Kolkata handles the
+// +5:30 conversion natively). Falls back to "Today" if the timestamp isn't present yet.
+function istDateTime(iso?: string): string {
+  if (!iso) return "Today"
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return "Today"
+  return d.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: true,
+    // en-IN emits lowercase am/pm; uppercase the meridiem so it reads "09:44 AM IST".
+  }).replace(/\b(am|pm)\b/i, (m) => m.toUpperCase()) + " IST"
+}
 
 // one-line summary of the chosen cover for the premium bar (research: re-unify the decision)
 function coverSummary(p: ProductState): string {
@@ -43,7 +56,7 @@ function coverSummary(p: ProductState): string {
 }
 
 export function Console({ appId, variant }: { appId: number | null; variant: Variant }) {
-  const { snap } = useAppSnapshot(appId)
+  const { snap, reload } = useAppSnapshot(appId)
   // Initial step: URL path (/demo/life/health) first, then ?start=N (demo/dev), else 1.
   // Either way it lands the console on that step and unlocks up to it.
   const startStep = slugToStep(window.location.pathname)
@@ -69,20 +82,27 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
     return () => window.removeEventListener("popstate", onPop)
   }, [maxReached])
   const [saving, setSaving] = useState(false)
-  const rail = useRail(appId, step)
   void variant
 
   // Step 2 product state (lifted so it survives step navigation + drives the save)
   const [product, setProduct] = useState<ProductState>({ plan: "term_protect", sum_assured: 10_000_000, tenure_years: 20, riders: [] })
+  // Step 4 sub-step index (declared here so the rail can scope its chips to the active
+  // health sub-step, the way Steps 1–3 scope theirs). 0 Health · 1 Vitals · 2 Face/ABHA.
+  const [healthSub, setHealthSub] = useState(0)
+  // On Step 2, feed the live-selected SI to the rail so the Cover/R-006 chip reacts to
+  // cover toggles before Continue persists them. 0 on other steps (rail uses the saved SI).
+  const rail = useRail(appId, step, step === 2 ? product.sum_assured : 0, healthSub)
   const [premium, setPremium] = useState<PremiumSummary | null>(null)
 
+  // Step 1 email (lifted so Continue can save it -> triggers the email-intel fraud API)
+  const [email, setEmail] = useState("")
   // Step 3 financial state (lifted; pre-filled once from the snapshot on first load / revisit)
   const [financial, setFinancial] = useState<FinancialState>({ declared_annual_income: 0, source_of_funds: "", purpose_of_cover: "" })
   // Step 4 health state (lifted so it survives navigation; defaults are all "No" / empty)
   const [health, setHealth] = useState<HealthState>(emptyHealth)
-  // Step 4 is paginated over its visible sub-steps (Screeners/Conditions/Vitals/Face scan);
-  // the footer walks these before advancing the whole step. maxHealthSub = furthest visited.
-  const [healthSub, setHealthSub] = useState(0)
+  // Step 4 is paginated over its visible sub-steps (Health/Vitals/Face scan); the footer
+  // walks these before advancing the whole step. maxHealthSub = furthest visited.
+  // (healthSub itself is declared above, near useRail, so the rail can read it.)
   const [maxHealthSub, setMaxHealthSub] = useState(0)
   // Step 6 nominee state (lifted; survives navigation). Multiple nominees + share split.
   const [nominees, setNominees] = useState<Nominee[]>([emptyNominee()])
@@ -100,8 +120,30 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
         purpose_of_cover: f.purpose_of_cover || "",
       })
     }
+    const e = snap.signals?.email_intel?.email
+    if (e) setEmail(e)
+    // Step 4 revisit: rehydrate the health form from what was already saved, so the form
+    // shows the conditions the applicant declared (and the rail + form agree). Editing then
+    // overwrites it normally. Only when there IS saved health data.
+    const hd = snap.health_declaration
+    if (hd && Object.keys(hd).length) setHealth(healthFromPayload(hd as any))
     prefilled.current = true
   }, [snap])
+
+  // Live-save the health declaration as the user edits it on Step 4, so the agent rail
+  // reacts in real time (toggle a condition → Medical score moves) instead of only on
+  // Continue. Debounced + gated to Step 4 + after prefill (so hydration doesn't re-save).
+  // /health accepts partials and only writes set fields.
+  useEffect(() => {
+    if (step !== 4 || appId == null || !prefilled.current) return
+    const t = setTimeout(() => {
+      fetch("/api/journey/health", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ app_id: appId, ...healthPayload(health) }),
+      }).catch(() => {})
+    }, 400)
+    return () => clearTimeout(t)
+  }, [health, step, appId])
 
   // No snapshot yet -> render the REAL shell in a loading state (same header/sidebar/grid/
   // rail as below, gray placeholders in the center). Identical components + grid classes =>
@@ -110,10 +152,27 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
 
   const meta = STEP_META[step - 1]
 
+  // Step 1 is complete only once identity is resolved (a PAN exists — from mobile prefill or
+  // the PAN gate). Until then the PAN-entry view is showing, so Continue must be disabled.
+  const stepComplete = step !== 1 || !!snap.seeded || !!snap.signals.pan_verify?.pan
+
   // Per-step save: POST to the step's endpoint, return ok. Steps not yet built just pass through.
   async function saveStep(): Promise<boolean> {
     if (appId == null) return true
     try {
+      if (step === 1) {
+        // Save the email on Continue -> this is what fires the email-intel fraud API
+        // (backend /api/journey/email -> vendor fetch -> signals.email_intel). Skip the
+        // call if the field is empty (email is optional); a bad email doesn't block the step.
+        const e = email.trim()
+        if (e) {
+          await fetch("/api/journey/email", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ app_id: appId, email: e }),
+          })
+        }
+        return true
+      }
       if (step === 2) {
         const r = await fetch("/api/journey/product", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -163,8 +222,11 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
   }
 
   async function onContinue() {
-    // Step 4 paginates its sub-steps; Continue walks them, saving only on the last one.
+    // Step 4 paginates its sub-steps; walk them, persisting the (partial) declaration on
+    // EACH Continue so the agent rail reacts as evidence lands (health -> vitals -> face),
+    // not only after the final sub-step. /health accepts a partial (writes only set fields).
     if (step === 4 && !onLastHealthSub) {
+      await saveStep()
       const ns = healthSub + 1
       setHealthSub(ns)
       setMaxHealthSub((m) => Math.max(m, ns))
@@ -202,15 +264,12 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
         </span>
         <span className="text-[15px] font-extrabold tracking-tight">Acme Life Insurance</span>
         <span className="ml-auto flex items-center gap-3">
-          {snap.seeded && <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[11px] font-semibold">demo data</span>}
           <span className="hidden sm:flex items-center gap-2 rounded-full px-2.5 py-1 bg-muted">
             <span className="grid place-items-center size-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold">
               {(snap.applicant.name || "?").trim().charAt(0).toUpperCase()}
             </span>
             <span className="text-[12px] font-semibold max-w-[150px] truncate">{snap.applicant.name || "New applicant"}</span>
-            <span className="font-mono text-[11px] text-muted-foreground">{snap.application_number}</span>
           </span>
-          <button className="text-muted-foreground hover:text-foreground"><Question className="size-5" /></button>
         </span>
       </header>
 
@@ -223,7 +282,7 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
       {/* CANVAS */}
       <div className="flex-1 flex min-h-0">
         <StepSidebar active={step} maxReached={maxReached} onJump={goTo}
-          appId={snap.application_number} startedAt="Today" />
+          appId={snap.application_number} startedAt={istDateTime(snap.created_at)} />
 
         <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_400px] gap-5 p-4 sm:p-5 lg:pl-0 pb-24 md:pb-5">
           <main className="min-w-0">
@@ -238,7 +297,7 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
                   : <div className="mt-5 border-b" />}
               </div>
               <div className="px-4 sm:px-6 lg:px-8 py-6">
-                {step === 1 && <IdentityCenter snap={snap} appId={appId} />}
+                {step === 1 && <IdentityCenter snap={snap} appId={appId} onPrefilled={reload} email={email} onEmailChange={setEmail} />}
                 {step === 2 && <ProductStep appId={appId} snap={snap} value={product} onChange={setProduct} onPremium={setPremium} />}
                 {step === 3 && <FinancialStep appId={appId} snap={snap} value={financial} onChange={setFinancial} />}
                 {step === 4 && <HealthStep appId={appId} snap={snap} value={health} onChange={setHealth} subStep={healthSub} />}
@@ -254,7 +313,7 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
                   {stepMsg && <span className="text-[12px] text-red-600 font-medium max-w-[22rem] text-right">{stepMsg}</span>}
                   {/* Step 7's primary action is the Pay button inside the step; no footer Continue. */}
                   {step !== 7 && (
-                    <button onClick={onContinue} disabled={saving}
+                    <button onClick={onContinue} disabled={saving || !stepComplete}
                       className="rounded-md bg-primary text-primary-foreground text-sm font-medium px-5 h-10 hover:bg-primary/90 transition-colors disabled:opacity-60">
                       {saving ? "Saving…" : `${onLastHealthSub ? meta.cta : "Continue"} ›`}
                     </button>

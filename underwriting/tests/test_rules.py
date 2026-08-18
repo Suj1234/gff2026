@@ -156,7 +156,7 @@ def test_life_senior_large_sa_reaches_reasoning_not_instant_refer():
     (grey-zone/step-up via R-005b senior medicals), reaching the judgment layer."""
     # Age 60 is within the life STP band (18-65) → R-005 does NOT hard-refer.
     assert rules.r005_age_band(60).outcome is None
-    # ₹1.5cr is within the life ceiling (₹2.5cr) → R-006 does NOT hard-refer.
+    # ₹1.5cr is within the life ceiling (₹5cr) → R-006 does NOT hard-refer.
     assert rules.r006_si_ceiling(15_000_000).outcome is None
     # And a full BRE run on such a case does not short-circuit to a hard-gate REFER
     # before reasoning — it reaches a soft/grey-zone/step-up outcome instead.

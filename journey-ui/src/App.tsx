@@ -11,9 +11,11 @@ export default function App() {
   const v = params.get("v");
   const variant = v === "teal" ? "teal" : "light";
 
-  // Session = a persisted appId (sessionStorage: survives refresh, dies with the tab).
+  // Session = a persisted appId (localStorage: survives refresh AND tab close / dev-server
+  // restart). Was sessionStorage, which died with the tab and silently dropped the user to
+  // the demo SEED identity mid-journey — the source of the "why is it Rajesh Menon?" bug.
   // A step URL (e.g. /demo/life/health) is only meaningful WITH a session.
-  const stored = Number(sessionStorage.getItem("appId")) || null;
+  const stored = Number(localStorage.getItem("appId")) || null;
   const onStepUrl = slugToStep(window.location.pathname) > 0;
   const forceConsole = params.get("step") === "console" || (onStepUrl && stored != null);
 
@@ -36,7 +38,7 @@ export default function App() {
       onVerifyStart={() => { loadStart.current = performance.now(); setView("loading"); }}
       onVerified={(id) => {
         setAppId(id);
-        sessionStorage.setItem("appId", String(id));  // persist the session for refresh + deep-link
+        localStorage.setItem("appId", String(id));  // persist across refresh, tab close + restart
         // keep the loader up for a minimum ~1.6s so it reads as a real step, not a flash
         const elapsed = performance.now() - loadStart.current;
         window.setTimeout(() => setView("console"), Math.max(0, 1600 - elapsed));

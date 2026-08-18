@@ -116,6 +116,29 @@ def test_iadore_unmatched_schema_warns_not_silent(caplog):
         "an unmatched-schema report must emit a coverage warning"
 
 
+def test_iadore_real_report_schema_pinned():
+    """E2 — lock the adapter to the REAL iAdore report captured 2026-08-18 (ICICI statement,
+    fixtures/iadore_real_report.json). The numbers live at
+    report.financialEvaluation.bankStatementAnalysis, money as '₹...' strings — NOT the
+    made-up RAW_IADORE shape. This is the regression that would have caught the all-null
+    silent-miss before prod. If iAdore changes the report schema, THIS test fails first."""
+    import json
+    from pathlib import Path
+
+    raw = json.loads((Path(__file__).parent / "fixtures" / "vendor_raw" / "iadore_real_report.json")
+                     .read_text(encoding="utf-8"))
+    aa = bs.to_account_aggregator(raw)
+    assert aa["status"] == "available"
+    assert aa["imputed_annual_income"] == 21_813_750     # '₹21813750.00' → int rupees
+    assert aa["avg_monthly_balance"] == 594_805.92        # '₹594805.92'
+    assert aa["expense_to_income"] == 0.0                 # '0%' obligationToIncomeRatio
+
+    fu = bs.to_follow_up_observation(raw, declared_annual_income=5_000_000)
+    assert fu["verified_annual_income"] == 21_813_750
+    assert fu["salary_credit_monthly"] == 1_817_812.5     # '₹1817812.50' monthlyIncome
+    assert fu["corroborates_declared_income"] is True     # 2.18Cr ≥ 0.8 × 50L
+
+
 def test_iadore_follow_up_drives_step_up_rejudge(monkeypatch):
     """End-to-end: an iAdore report mapped to the follow-up shape drives the STEP_UP
     income re-judge to a corroborated ISSUE (the B1 done-when).

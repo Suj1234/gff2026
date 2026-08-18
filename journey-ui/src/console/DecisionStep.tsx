@@ -96,11 +96,12 @@ export function DecisionStep({ appId }: { appId: number | null }) {
   const run = useCallback(async () => {
     setPhase("running"); setErr("")
     try {
-      if (mock) {
+      // No real app (seeded demo preview) OR ?mock → show the sample decision. Without this
+      // a null appId returned early and the step hung on "Running…" forever.
+      if (mock || appId == null) {
         const full = await fetch(`/api/journey/decision/0?mock=1`).then((r) => r.json())
         setRes(full); setPhase("ready"); return
       }
-      if (appId == null) return
       const d = await fetch(`/api/journey/decide/${appId}`, { method: "POST" }).then((r) => r.json())
       if (d.success === false) { setErr(d.message || "Underwriting failed."); setPhase("error"); return }
       const full = await fetch(`/api/journey/decision/${appId}`).then((r) => r.json())

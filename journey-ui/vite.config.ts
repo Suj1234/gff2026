@@ -39,6 +39,11 @@ export default defineConfig({
       },
       // Keep the bare /api mapping too (direct calls, non-based dev).
       "/api": { target: "http://127.0.0.1:8899", changeOrigin: true },
+      // DigiLocker returns the browser to the UI origin (:5173) so the session cookie
+      // (set on :5173 at OTP) IS sent; Vite forwards the callback to the backend :8899.
+      // Without this the callback lands on a different origin, the cookie is missing,
+      // and the KYC pull silently fails. Same for the bare-based path under /demo/life.
+      "/digilocker/callback": { target: "http://127.0.0.1:8899", changeOrigin: true },
     },
   },
 });

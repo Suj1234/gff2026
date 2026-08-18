@@ -1,5 +1,6 @@
+import { useState, useEffect } from "react"
 import type { AppSnapshot } from "./useJourney"
-import { SealCheck, Warning, Buildings, EnvelopeSimple, FingerprintSimple, ShieldCheck } from "@phosphor-icons/react"
+import { SealCheck, Warning, Buildings, EnvelopeSimple, FingerprintSimple, ShieldCheck, IdentificationCard } from "@phosphor-icons/react"
 
 // Center panel for Step 1. Editability-spectrum layout (per the reference):
 //   HERO card   = core identity, PAN/Aadhaar-verified. Heaviest weight, NOT editable.
@@ -94,20 +95,136 @@ function IdentityHero({ snap }: { snap: AppSnapshot }) {
   )
 }
 
-export function IdentityCenter({ snap, appId }: { snap: AppSnapshot; appId: number | null }) {
+// Flow B (vendor_apis §2): mobile prefill returned no PAN. Ask for the PAN, then fetch the
+// full profile from it. Shown INSTEAD of the identity panel until a PAN resolves.
+function PanGate({ appId, onPrefilled }: { appId: number | null; onPrefilled?: () => void }) {
+  const [pan, setPan] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState("")
+  const valid = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan.trim().toUpperCase())
+
+  async function fetchProfile() {
+    if (appId == null || !valid) return
+    setBusy(true); setErr("")
+    try {
+      const r = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/journey/prefill-by-pan`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ app_id: appId, pan: pan.trim().toUpperCase() }),
+      })
+      const d = await r.json()
+      if (d.success === false) { setErr(d.message || "Could not fetch details."); return }
+      onPrefilled?.()   // reload the snapshot so the identity panel renders with the fetched data
+    } catch { setErr("Network error — try again.") } finally { setBusy(false) }
+  }
+
+  return (
+    <section className="rounded-2xl bg-white px-6 py-6 border border-[oklch(0.88_0.004_90)] shadow-[0_1px_2px_rgba(42,41,36,0.06)] max-w-xl">
+      <SectionHead icon={IdentificationCard} title="Enter your PAN" />
+      <p className="text-sm text-muted-foreground mb-4">
+        Enter your PAN number to fetch the details.
+      </p>
+      <label className="block text-[13px] font-medium mb-1.5">PAN</label>
+      <input
+        value={pan}
+        onChange={(e) => { setPan(e.target.value.toUpperCase()); setErr("") }}
+        onKeyDown={(e) => { if (e.key === "Enter") fetchProfile() }}
+        placeholder="ABCDE1234F" maxLength={10} autoFocus
+        className="w-full rounded-md border-2 bg-white px-3.5 h-11 text-sm font-mono tracking-wide uppercase outline-none focus:border-ring focus:ring-[3px] focus:ring-ring/30 transition-[color,box-shadow]" />
+      {err && <p className="mt-2 text-[13px] text-red-600 font-medium">{err}</p>}
+      <button
+        onClick={fetchProfile} disabled={!valid || busy || appId == null}
+        className="mt-4 rounded-md bg-primary text-primary-foreground text-sm font-medium px-5 h-10 hover:bg-primary/90 transition-colors disabled:opacity-50">
+        {busy ? "Fetching details…" : "Fetch details"}
+      </button>
+    </section>
+  )
+}
+
+export function IdentityCenter({ snap, appId, onPrefilled, email, onEmailChange }: {
+  snap: AppSnapshot; appId: number | null; onPrefilled?: () => void
+  email: string; onEmailChange: (v: string) => void
+}) {
   const a = snap.applicant
   const epfo = snap.signals.epfo || {}
-  const email = snap.signals.email_intel?.email
+  const gst = snap.signals.gst || {}
   const aadhaar = snap.signals.aadhaar_ekyc || {}
   const aadhaarDone = aadhaar.status === "available"
+  const [dlBusy, setDlBusy] = useState(false)
+
+  // Persona (mirrors the rail): salaried = EPFO present, self-employed = GST present.
+  // Drives which sections the center shows — an owner sees Business & GST, not an empty
+  // Employment block; a salaried+SE applicant (both) sees both stacked.
+  const hasEpfo = !!(epfo.employer || epfo.uan)
+  const hasGst = !!(gst.gstin || gst.gstin_count || (gst.status && gst.status !== "unavailable"))
+  const showEmployment = hasEpfo || (!hasEpfo && !hasGst)  // salaried/unknown → employment; owner → hide
+  const showBusiness = hasGst
+
+  const dlUrl = appId != null
+    ? `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/journey/digilocker/start/${appId}`
+    : ""
+
+  // DigiLocker runs in a POPUP — its gov.in consent page hard-blocks iframing
+  // (X-Frame-Options), so a popup is the only reliable in-app option; the console stays
+  // visible behind it. On completion our callback page (same origin via the vite proxy)
+  // messages us back + closes itself; we reload the snapshot so the verified Aadhaar renders.
+  // Same-origin return (:5173) keeps the session cookie flowing.
+  useEffect(() => {
+    function onMsg(e: MessageEvent) {
+      if (e.origin !== window.location.origin) return          // trust only our own popup
+      if (e.data?.type !== "digilocker") return
+      setDlBusy(false)
+      onPrefilled?.()                                           // refresh -> Aadhaar panel
+    }
+    window.addEventListener("message", onMsg)
+    return () => window.removeEventListener("message", onMsg)
+  }, [onPrefilled])
+
+  function openDigilocker() {
+    if (appId == null) return
+    // DigiLocker's consent page is a FIXED narrow single-column layout (~480px) — it does
+    // NOT stretch to fill a wide window, so a wide popup just leaves an empty right gutter
+    // (looks "shrunk"). Size the window to their column width, tall for the OTP/consent steps.
+    const w = Math.min(560, window.outerWidth - 80), h = Math.min(820, window.outerHeight - 80)
+    const left = window.screenX + (window.outerWidth - w) / 2
+    const top = window.screenY + (window.outerHeight - h) / 2
+    const popup = window.open(dlUrl, "digilocker", `width=${w},height=${h},left=${left},top=${top}`)
+    if (!popup) { window.location.href = dlUrl; return }        // popup blocked -> full-tab fallback
+    setDlBusy(true)
+    const timer = setInterval(() => { if (popup.closed) { clearInterval(timer); setDlBusy(false) } }, 800)
+  }
+
+  // Flow B: no PAN resolved from the mobile prefill (and this is a real app, not the demo
+  // seed) -> gate Step 1 behind PAN entry. The SEED always carries a PAN, so the pure preview
+  // is unaffected.
+  if (appId != null && !snap.seeded && !snap.signals.pan_verify?.pan) {
+    return <PanGate appId={appId} onPrefilled={onPrefilled} />
+  }
 
   return (
     <div className="space-y-6">
       {/* HERO — core verified identity */}
       <IdentityHero snap={snap} />
 
-      {/* Fetched read-only groups: Employment | Aadhaar. Flat rows, no field boxes. */}
+      {/* Fetched read-only groups, persona-adaptive: salaried → Employment; self-employed →
+          Business & GST; both → both stacked. Aadhaar always present. Flat rows, no boxes. */}
       <div className="grid lg:grid-cols-2 gap-6">
+        {showBusiness && (
+          <section>
+            <SectionHead icon={Buildings} title="Business & GST">
+              {gst.any_cancelled
+                ? <Tag tone="bad"><Warning className="size-3" weight="fill" /> GST cancelled</Tag>
+                : <Tag tone="ok"><SealCheck className="size-3" weight="fill" /> GST active</Tag>}
+            </SectionHead>
+            <div className="rounded-xl bg-[#faf9f7] px-4 py-1">
+              <FactRow k="GST status" v={gst.any_cancelled ? "Cancelled" : (gst.statuses?.[0] || gst.status)} />
+              <FactRow k="GSTINs" v={gst.gstin_count ? String(gst.gstin_count) : undefined} />
+              <FactRow k="Turnover" v={gst.turnover_slab} />
+              <FactRow k="Business since" v={gst.registration_date} />
+              <FactRow k="Nature" v={gst.nature_of_business?.length ? gst.nature_of_business.join(", ") : undefined} />
+            </div>
+          </section>
+        )}
+        {showEmployment && (
         <section>
           <SectionHead icon={Buildings} title="Employment">
             {(epfo.employer || epfo.uan)
@@ -120,6 +237,7 @@ export function IdentityCenter({ snap, appId }: { snap: AppSnapshot; appId: numb
             <FactRow k="UAN" v={epfo.uan} mono />
           </div>
         </section>
+        )}
 
         <section>
           <SectionHead icon={FingerprintSimple} title="Aadhaar e-KYC (DigiLocker)">
@@ -129,7 +247,6 @@ export function IdentityCenter({ snap, appId }: { snap: AppSnapshot; appId: numb
             <div className="rounded-xl bg-[#faf9f7] px-4 py-1">
               <FactRow k="Name" v={aadhaar.name || a.name} />
               <FactRow k="Date of birth" v={aadhaar.dob || a.dob} />
-              <FactRow k="Address" v={aadhaar.address ? "Matches records" : undefined} />
               <div className="py-2.5 flex items-center gap-1.5 text-[12px] text-muted-foreground">
                 <ShieldCheck weight="fill" className="size-3.5 text-primary" /> No Aadhaar number is stored
               </div>
@@ -140,10 +257,10 @@ export function IdentityCenter({ snap, appId }: { snap: AppSnapshot; appId: numb
                 Fetches verified name, DOB and address from Aadhaar. No Aadhaar number is stored.
               </p>
               <button
-                onClick={() => { if (appId != null) window.location.href = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/journey/digilocker/start/${appId}` }}
-                disabled={appId == null}
+                onClick={openDigilocker}
+                disabled={appId == null || dlBusy}
                 className="rounded-md bg-primary text-primary-foreground text-sm font-medium px-4 h-10 hover:bg-primary/90 transition-colors self-start disabled:opacity-50">
-                Verify via DigiLocker
+                {dlBusy ? "Waiting for DigiLocker…" : "Verify via DigiLocker"}
               </button>
             </div>
           )}
@@ -156,9 +273,10 @@ export function IdentityCenter({ snap, appId }: { snap: AppSnapshot; appId: numb
           <span className="text-xs text-muted-foreground">fraud &amp; contactability check</span>
         </SectionHead>
         <div className="max-w-md">
-          <input type="email" defaultValue={email} placeholder="applicant@email.com"
+          <input type="email" value={email} onChange={(e) => onEmailChange(e.target.value)}
+            placeholder="applicant@email.com"
             className="w-full rounded-md border-2 bg-white px-3.5 h-11 text-sm outline-none focus:border-ring focus:ring-[3px] focus:ring-ring/30 transition-[color,box-shadow]" />
-          <p className="mt-1.5 text-xs text-muted-foreground">We use this to reach the applicant. Saved when you continue.</p>
+          <p className="mt-1.5 text-xs text-muted-foreground">We use this to reach the applicant and run a fraud &amp; contactability check when you continue.</p>
         </div>
       </section>
     </div>

@@ -62,7 +62,7 @@ export function StepSidebar({
 
       {/* Card 2 — application context (SEPARATE card) */}
       <div className="rounded-2xl elev-card p-4">
-        <div className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/80 font-semibold mb-2.5">Application</div>
+        <div className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/80 font-semibold mb-2.5">Application Details</div>
         <div className="space-y-2">
           <Row k="ID" v={appId || "—"} mono />
           <Row k="Started" v={startedAt || "Today"} />

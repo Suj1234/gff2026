@@ -19,7 +19,9 @@ export type Signals = {
   pan_verify?: { pan?: string; pan_status?: string }
   mobile_intel?: { provider?: string; ported_recently?: boolean }
   epfo?: { uan?: string; employer?: string; employment_type?: string }
-  gst?: { gstin?: string; turnover_slab?: string }
+  gst?: { status?: string; gstin?: string; gstin_count?: number; any_cancelled?: boolean
+    statuses?: string[]; turnover_slab?: string; registration_date?: string
+    nature_of_business?: string[]; trade_name?: string }
   litigation_fir?: Record<string, unknown>
   mca_director?: { director_default?: boolean }
   email_intel?: { email?: string }
@@ -36,10 +38,12 @@ export type Signals = {
 export type AppSnapshot = {
   success: boolean
   application_number?: string
+  created_at?: string          // UTC ISO from the DB; rendered in IST
   current_step?: number
   applicant: Applicant
   financial?: Financial
   product?: Product
+  health_declaration?: Record<string, unknown>   // Step 4 pre-fill on revisit (flat payload)
   status?: string
   signals: Signals
   seeded?: boolean
@@ -79,8 +83,10 @@ export type RailGroup = {
   key: string; label: string; sub_score: number
   severity: "ok" | "warn" | "bad" | "idle"; why: string
   context?: RailContext[]   // read-only sub-items (Financial: GST / vehicle / imputed income)
+  gate?: boolean            // pass/fail gate chip (e.g. Cover/R-006) — show status, no 0-100 score
 }
-export type Rail = { safety_score: number | null; band: string | null; groups: RailGroup[] }
+export type Rail = { safety_score: number | null; band: string | null; groups: RailGroup[]
+  persona?: string; assessed_count?: number; total_count?: number }
 
 const SEED: AppSnapshot = {
   success: true,
@@ -104,40 +110,46 @@ const SEED: AppSnapshot = {
   },
 }
 
-function isEmpty(s: AppSnapshot): boolean {
-  return !s.applicant?.name && !s.signals?.pan_verify?.pan
-}
-
 export function useAppSnapshot(appId: number | null) {
   const [snap, setSnap] = useState<AppSnapshot | null>(null)
   const load = useCallback(async () => {
-    if (appId == null) { setSnap(SEED); return }        // no app yet -> demo seed
+    if (appId == null) { setSnap(SEED); return }        // no app yet -> pure demo preview only
     try {
       const r = await fetch(`/api/journey/app/${appId}`)
       const d = (await r.json()) as AppSnapshot
-      if (!d.success || isEmpty(d)) setSnap({ ...SEED, seeded: true })
-      else setSnap(d)
+      // Show the REAL snapshot as-is. A thin result (mobile prefill returned no PAN) is a real
+      // state the UI handles (PAN-entry sub-view) — do NOT paper over it with the demo SEED,
+      // which is what made a live run look like mock data.
+      if (d.success) setSnap(d)
+      else setSnap({ ...SEED, seeded: true })            // API error only -> labeled demo fallback
     } catch { setSnap({ ...SEED, seeded: true }) }
   }, [appId])
   useEffect(() => { load() }, [load])
   return { snap, reload: load }
 }
 
-export function useRail(appId: number | null, step: number) {
+export function useRail(appId: number | null, step: number, si = 0, sub = 0) {
   const [rail, setRail] = useState<Rail | null>(null)
   useEffect(() => {
     if (appId == null) return
     let live = true
+    // si (Step 2 only): the live-selected sum insured, so the Cover/R-006 chip reacts as the
+    // underwriter toggles the cover — before Continue persists it. 0 = use the saved SI.
+    const siq = si ? `&si=${si}` : ""
+    // sub (Step 4 only): the active health sub-step (0 Health · 1 Vitals · 2 Face/ABHA), so
+    // the rail scopes its chips to that sub-step's evidence — same as Steps 1–3 scope theirs.
+    const subq = step === 4 ? `&sub=${sub}` : ""
     const poll = async () => {
       try {
-        const r = await fetch(`/api/journey/rail/${appId}?step=${step}`, { headers: { "Cache-Control": "no-cache" } })
+        const r = await fetch(`/api/journey/rail/${appId}?step=${step}${siq}${subq}`, { headers: { "Cache-Control": "no-cache" } })
         const d = await r.json()
-        if (live && d.success) setRail({ safety_score: d.safety_score, band: d.band, groups: d.groups || [] })
+        if (live && d.success) setRail({ safety_score: d.safety_score, band: d.band, groups: d.groups || [],
+          persona: d.persona, assessed_count: d.assessed_count, total_count: d.total_count })
       } catch { /* transient */ }
     }
     poll()
     const t = setInterval(poll, 4000)
     return () => { live = false; clearInterval(t) }
-  }, [appId, step])
+  }, [appId, step, si, sub])
   return rail
 }

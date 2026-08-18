@@ -112,12 +112,27 @@ def poll(tx_id: str) -> dict:
 
 
 # --- Step 3: fetch the JSON analysis report (no Minio) ---
+# Docs (vendor_apis.md §4) say the report path FLIPS to /iadore/api/v1/...; but submit/poll
+# (which succeed) use /api/v1/iadore/..., and this POC gateway 403s the flipped path. So try
+# BOTH orders — whichever returns 200 wins. If both 403, it's a report-scope permission on the
+# org key, not a path bug (no code fix — ask Perfios to enable report access for the org).
+_REPORT_PATHS = (
+    "{base}/iadore/api/v1/{org}/{tx}/json/report",   # docs §4 order
+    "{base}/api/v1/iadore/{org}/{tx}/json/report",   # same order as submit/poll (both 200)
+)
+
+
 def report(tx_id: str) -> dict:
-    # NOTE: path order differs from submit/poll — "iadore" comes BEFORE "api/v1" here.
-    url = f"{BASE_URL}/iadore/api/v1/{ORG}/{tx_id}/json/report"
-    r = requests.get(url, headers=_headers(), timeout=SUBMIT_TIMEOUT, verify=False)
-    r.raise_for_status()
-    return r.json()
+    last = None
+    for tmpl in _REPORT_PATHS:
+        url = tmpl.format(base=BASE_URL, org=ORG, tx=tx_id)
+        r = requests.get(url, headers=_headers(), timeout=SUBMIT_TIMEOUT, verify=False)
+        if r.status_code in (403, 404):
+            last = r
+            continue
+        r.raise_for_status()
+        return r.json()
+    last.raise_for_status()  # both paths rejected → real permission issue, surface it
 
 
 # --- full flow: submit -> poll -> report ---

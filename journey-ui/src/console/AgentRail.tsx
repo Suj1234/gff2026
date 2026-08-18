@@ -20,11 +20,22 @@ export function railTone(band?: string | null): Tone {
 }
 
 export function railRows(rail: Rail | null): RailGroup[] {
-  return rail?.groups?.length
-    ? rail.groups
-    : ["Identity / KYC", "Occupation", "Fraud", "Litigation", "Contactability"].map((label) => ({
+  // Two distinct empty states:
+  //  - rail === null       → not loaded yet: show a neutral placeholder set so the card
+  //                          isn't blank on first paint.
+  //  - rail.groups === []  → loaded and legitimately empty (e.g. Step-4 Health sub-step
+  //                          with nothing declared): render NOTHING, not the placeholder.
+  //                          Previously this fell through to the placeholder and showed the
+  //                          Step-1 chip list on Step 4 (the bug).
+  const rows = rail == null
+    ? ["Identity / KYC", "Occupation", "Litigation", "Contactability"].map((label) => ({
         key: label, label, sub_score: 0, severity: "idle" as const, why: "awaiting source",
       }))
+    : rail.groups
+  // UI-only: hide the Fraud chip while it's still idle (its input, email intel, arrives on
+  // Continue). The engine still computes + uses fraud for the decision — this only suppresses
+  // the "awaiting source" placeholder chip. Once fraud has real data it renders normally.
+  return rows.filter((g) => !(g.key === "fraud_check" && g.severity === "idle"))
 }
 
 export function Gauge({ value, tone, size = 84 }: { value: number | null; tone: Tone; size?: number }) {
@@ -57,7 +68,13 @@ export function Gauge({ value, tone, size = 84 }: { value: number | null; tone: 
 export function RailBody({ rail }: { rail: Rail | null }) {
   const score = rail?.safety_score ?? null
   const band = rail?.band
-  const tone = railTone(band)
+  const assessed = rail?.assessed_count ?? 0
+  const total = rail?.total_count ?? 0
+  // The score is PROVISIONAL until enough sources have returned — early on (e.g. only KYC in
+  // at Step 1) a "100 / Low Risk" is not a verdict, just what's been checked so far. Below the
+  // threshold we mute the band to "Provisional" so it isn't read as final. (threshold: ~half.)
+  const provisional = total > 0 && assessed < Math.ceil(total / 2)
+  const tone = provisional ? "idle" : railTone(band)
   const rows = railRows(rail)
   return (
     <>
@@ -69,13 +86,22 @@ export function RailBody({ rail }: { rail: Rail | null }) {
           <Gauge value={score} tone={tone} />
           <div>
             <div className="text-xs text-muted-foreground">Safety Score</div>
-            <div className={`text-sm font-bold ${SEV[tone].text}`}>{band || "accumulating"}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">updates as sources return</div>
+            <div className={`text-sm font-bold ${SEV[tone].text}`}>
+              {provisional ? "Provisional" : (band || "accumulating")}
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              {total > 0 ? `${assessed} of ${total} sources in — updates as more return` : "updates as sources return"}
+            </div>
           </div>
         </div>
       </div>
 
       <ul className="divide-y">
+        {rows.length === 0 && (
+          <li className="px-5 py-4 text-[12px] text-muted-foreground">
+            Nothing to check on this step yet — answer the questions and the agent updates here.
+          </li>
+        )}
         {rows.map((g, i) => {
           const s = SEV[g.severity]
           return (
@@ -86,10 +112,22 @@ export function RailBody({ rail }: { rail: Rail | null }) {
                   <span className={`text-[13px] font-semibold truncate ${g.severity === "idle" ? "text-muted-foreground" : ""}`}>{g.label}</span>
                 </div>
                 <span className="text-[13px] font-bold tabular-nums text-muted-foreground shrink-0">
-                  {g.severity === "idle" ? "—" : Math.round(g.sub_score)}
+                  {g.severity === "idle" || g.gate ? "—" : Math.round(g.sub_score)}
                 </span>
               </div>
-              <p className="mt-1 text-[12px] text-muted-foreground leading-snug pl-4">{g.why}</p>
+              {/* One flag per line (scorer joins reasons with "; ") — a wall of text reads as noise. */}
+              {g.severity === "idle" || !g.why?.includes("; ") ? (
+                <p className="mt-1 text-[12px] text-muted-foreground leading-snug pl-4">{g.why}</p>
+              ) : (
+                <ul className="mt-1 pl-4 space-y-0.5">
+                  {g.why.split("; ").map((line, j) => (
+                    <li key={j} className="flex gap-1.5 text-[12px] text-muted-foreground leading-snug">
+                      <span className={`mt-[3px] size-1 rounded-full shrink-0 ${s.dot}`} />
+                      <span>{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               {g.context && g.context.length > 0 && (
                 <dl className="mt-2 pl-4 space-y-1">
                   {g.context.map((c) => (

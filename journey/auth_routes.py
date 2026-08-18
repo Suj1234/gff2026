@@ -275,16 +275,59 @@ def _merge_profile_into_bundle(app: Application, data: dict) -> None:
         mapped = adapt("litigation_fir", data["litigation"])
         mapped.setdefault("status", "available")
         signals["litigation_fir"] = mapped
-    if data.get("soleProprietor") and (data["soleProprietor"] or {}).get("gst"):
-        # GST + activeAlerts -> the gst signal the engine reads (R-019).
-        sp = data["soleProprietor"]
-        gst_list = sp.get("gst") or []
+    sp = data.get("soleProprietor") or {}
+    # B4: read activeAlerts INDEPENDENT of the gst[] presence (alerts can arrive alone).
+    # B2: scan ALL gst[] entries, not just gst[0] — a CANCELLED GSTIN listed after an
+    # ACTIVE one would otherwise be invisible (Paulson has exactly this).
+    gst_list = sp.get("gst") or []
+    active_alerts = sp.get("activeAlerts") or []
+    if gst_list or active_alerts:
+        # "any cancelled across the whole list" is the material fact R-019 cares about.
+        any_cancelled = any("CANCEL" in str(g.get("status", "")).upper() for g in gst_list)
         first = gst_list[0] if gst_list else {}
+        bp = sp.get("businessProfile") or {}
         signals["gst"] = {
             "status": "available",
             "gstin": first.get("gstin"),
-            "turnover_slab": ((first.get("turnovers") or [{}])[0]).get("turnover"),
-            "active_alerts": sp.get("activeAlerts") or [],
+            "gstin_count": len(gst_list),
+            "any_cancelled": any_cancelled,           # derived across ALL entries (B2)
+            "statuses": [g.get("status") for g in gst_list],
+            "turnover_slab": _gst_turnover(first),
+            # R-019 reads `activeAlerts` (camelCase) off model_extra — write that exact key
+            # (a prior snake_case-only write meant R-019 never saw the alerts). Keep the
+            # snake_case alias too for the rail/display.
+            "activeAlerts": active_alerts,
+            "active_alerts": active_alerts,
+            # business-profile facts (income-stability + hazard inputs) — previously dropped.
+            "registration_date": bp.get("dateOfIncorporation"),
+            "nature_of_business": bp.get("natureOfBusiness") or [],
+            "trade_name": bp.get("tradeName"),
+        }
+    emp = data.get("employment") or {}
+    if emp:
+        # B3: dateOfJoining is nested under history[], not at the top of employment.
+        hist = emp.get("history") or []
+        current = next((h for h in hist if h.get("isCurrentEmployer")), (hist[0] if hist else {}))
+        signals["epfo"] = {
+            "status": "available",
+            "employer": emp.get("currentEmployer"),
+            "uan": emp.get("uan"),
+            "employment_type": "salaried" if ident.get("isSalaried") else None,
+            "date_of_joining": current.get("dateOfJoining") or emp.get("dateOfJoining"),  # B3
+            "job_count": len(hist),
+        }
+    # B1: director is a real moral-hazard signal with a rule already waiting for it
+    # (scoring._s_occupation -35, R-012). It was dropped entirely. isDirector true (or a
+    # directorProfile present) -> populate mca_director so that rule can actually fire.
+    dp = data.get("directorProfile")
+    if ident.get("isDirector") is True or dp:
+        signals["mca_director"] = {
+            "status": "available",
+            "is_director": True,
+            # director_default is the FACT the -35 rule reads; the vendor marks it in the
+            # director profile when present. Absent/unknown -> False (no false penalty).
+            "director_default": bool((dp or {}).get("isDefaulter") or (dp or {}).get("defaulter")),
+            "entity": (dp or {}).get("companyName") or (dp or {}).get("entity"),
         }
     if data.get("mobileIntelligence"):
         mi = data["mobileIntelligence"]
@@ -292,5 +335,38 @@ def _merge_profile_into_bundle(app: Application, data: dict) -> None:
             "status": "available", "number": data.get("mobile"),
             "provider": mi.get("currentServiceProvider"),
             "ported_recently": (mi.get("isPorted") == "Yes"),
+            # previously-dropped facts the scorer/rail should see:
+            "vintage_months": _mobile_age_months(mi.get("mobileAge")),
+            "number_valid": (str(mi.get("numberValid", "")).lower() == "yes"),
+            "line_status": mi.get("status"),
+            "region_shift": bool(mi.get("currentRegion") and mi.get("originalRegion")
+                                 and mi.get("currentRegion") != mi.get("originalRegion")),
+            "current_region": mi.get("currentRegion"),
+            "original_region": mi.get("originalRegion"),
         }
     app.bundle = bundle
+
+
+def _gst_turnover(gst_entry: dict):
+    """Vendor turnovers arrive as either a list [{turnover}] (Paulson) or a dict
+    {turnover, financialYear} (Sabarish). Return the turnover string, tolerating both."""
+    t = gst_entry.get("turnovers")
+    if isinstance(t, list):
+        return (t[0] if t else {}).get("turnover")
+    if isinstance(t, dict):
+        return t.get("turnover")
+    return None
+
+
+def _mobile_age_months(age_label) -> Optional[int]:
+    """Vendor mobileAge is a text band ("11 to 12 Years", "18 to 19 Years"). Parse the
+    LOWER bound to months — conservative (younger) so a fraud threshold never under-reads.
+    Unparseable -> None (absent, not a false-safe 0)."""
+    if not isinstance(age_label, str):
+        return None
+    import re
+    nums = re.findall(r"\d+", age_label)
+    if not nums:
+        return None
+    low = int(nums[0])
+    return low * 12 if "year" in age_label.lower() else low

@@ -59,8 +59,15 @@ def _num(v) -> Optional[float]:
     if isinstance(v, (int, float)):
         return float(v)
     if isinstance(v, str):
+        # iAdore money/ratio strings carry symbols: "₹21813750.00", "0%",
+        # "₹0(0.00% of Income)". Keep the leading numeric run; drop ₹ , % and any trailer.
+        s = v.replace("₹", "").replace(",", "").replace("%", "").strip()
+        import re
+        m = re.match(r"-?\d+(?:\.\d+)?", s)
+        if not m:
+            return None
         try:
-            return float(v.replace(",", "").strip())
+            return float(m.group())
         except ValueError:
             return None
     return None
@@ -88,16 +95,27 @@ _ENVELOPE_KEYS = ("analysis", "summary", "report", "data")
 
 
 def _analysis(raw: dict) -> Optional[dict]:
-    """Unwrap the report envelope. iAdore nests the numbers under `analysis` /
-    `summary` / `report` depending on version; fall back to the top level.
+    """Unwrap the report envelope down to the dict holding the income numbers. The real
+    iAdore report nests them at `report.financialEvaluation.bankStatementAnalysis`
+    (captured 2026-08-18); older/other versions put them under `analysis`/`summary` or at
+    the top level. Descend to whichever exists.
 
     Returns None (→ `unavailable`) for a malformed report: an envelope key present but
     not a usable dict (e.g. `{"analysis": "nope"}`) is not a valid report body."""
+    body = raw
     for key in _ENVELOPE_KEYS:
         if key in raw:
             inner = raw.get(key)
-            return inner if isinstance(inner, dict) and inner else None
-    return raw  # no envelope → the numbers are at the top level
+            if not (isinstance(inner, dict) and inner):
+                return None
+            body = inner
+            break
+    # Real iAdore shape: the statement numbers live two levels deeper.
+    bsa = (body.get("financialEvaluation") or {}).get("bankStatementAnalysis") \
+        if isinstance(body, dict) else None
+    if isinstance(bsa, dict) and bsa:
+        return bsa
+    return body
 
 
 def _verified_annual_income(a: dict) -> Optional[int]:
@@ -124,7 +142,7 @@ def _salary_credit_monthly(a: dict) -> Optional[float]:
         return _rupees(paise, paise=True)
     rupee = _first(
         a, "salaryCreditMonthly", "avgMonthlySalary", "averageMonthlySalary",
-        "monthlySalaryCredit", "salary_credit_monthly",
+        "monthlySalaryCredit", "salary_credit_monthly", "monthlyIncome",
     )
     return _num(rupee)
 
@@ -150,8 +168,9 @@ def _warn_if_unmatched_schema(a: dict, verified, balance, salary) -> None:
     body that PARSED (a real, non-trivial analysis dict) but from which NO income /
     balance / salary field matched any known spelling is the silent-miss signature — the
     schema is probably a version this adapter doesn't know. Surface it loudly rather than
-    returning clean-looking all-None income. Until a real iAdore report is captured and
-    the fixture pinned (deferred — JOURNEY_PLAN.md §later E2), this is the tripwire."""
+    returning clean-looking all-None income. The real 2026-08-18 report is now pinned
+    (tests/fixtures/vendor_raw/iadore_real_report.json, test_iadore_real_report_schema_pinned);
+    this warning still guards against a FUTURE schema change the adapter hasn't learned."""
     if verified is None and balance is None and salary is None and len(a) > 1:
         log.warning(
             "iAdore report parsed (%d fields: %s) but matched NO income/balance/salary "
@@ -180,8 +199,11 @@ def to_account_aggregator(raw: dict) -> dict:
         "period": _first(a, "statementPeriod", "period"),
         "imputed_annual_income": verified,
         "avg_monthly_balance": balance,
-        "expense_to_income": _num(_first(a, "expenseToIncomeRatio", "expense_to_income")),
+        "expense_to_income": _num(_first(a, "expenseToIncomeRatio",
+                                          "obligationToIncomeRatio", "expense_to_income")),
         "income_source": _income_source(a),
+        # Surrogate-income FACT (e.g. "Customer owns a Vehicle") — displayed as context, no rule reads it.
+        "physical_assets": _first(a, "physicalAssets", "physical_assets"),
         # Categorized transactions flow through as facts; verdicts stay out (§1.8).
         "credits": a.get("credits", []) if isinstance(a.get("credits"), list) else [],
         "debits": a.get("debits", []) if isinstance(a.get("debits"), list) else [],

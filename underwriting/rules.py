@@ -886,6 +886,84 @@ def r019_gst_alerts(sig: Signals) -> RuleResult:
 
 
 # ===========================================================================
+# R-020..R-022 — enrichment genuineness signals (mobile / tenure / business).
+# Each is an individually MILD soft flag (never a gate); 2+ cluster to grey-zone
+# (weak signals → one concern). Facts come from the Step-1 mobile→PAN prefill.
+# ===========================================================================
+def _months_since(date_str: Optional[str]) -> Optional[int]:
+    """Whole months between an ISO/DMY date and today. None if unparseable."""
+    if not date_str:
+        return None
+    from datetime import date
+    s = str(date_str)[:10]
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+        try:
+            from datetime import datetime
+            d = datetime.strptime(s, fmt).date()
+            break
+        except ValueError:
+            d = None
+    if d is None:
+        return None
+    today = date.today()
+    return (today.year - d.year) * 12 + (today.month - d.month)
+
+
+def r020_mobile_intel(sig: Signals) -> RuleResult:
+    """R-020 — mobile-intelligence genuineness: a very young number → `mobile_recent_number`,
+    an invalid number → `mobile_invalid`. Both mild, cluster-eligible, never a gate."""
+    mi = sig.mobile_intel
+    if not mi.available:
+        return RuleResult(rule_id="R-020")
+    mx = mi.model_extra or {}
+    flags = []
+    vm = mi.vintage_months if mi.vintage_months is not None else mx.get("vintage_months")
+    if isinstance(vm, (int, float)) and vm < C.MOBILE_RECENT_NUMBER_MAX_MONTHS:
+        flags.append(_flag("mobile_recent_number", "R-020", "R-020-recent-number",
+                           f"Mobile number is only ~{int(vm)} months old (recent-number signal).",
+                           severity=Severity.moderate, cited=["signals.mobile_intel.vintage_months"],
+                           ctx={"vintage_months": int(vm)}))
+    if C.MOBILE_INVALID_IS_HARD and mx.get("number_valid") is False:
+        flags.append(_flag("mobile_invalid", "R-020", "R-020-invalid-number",
+                           "Mobile number reported not valid / unreachable.",
+                           severity=Severity.moderate, cited=["signals.mobile_intel.number_valid"]))
+    return RuleResult(rule_id="R-020", flags=flags)
+
+
+def r021_tenure(sig: Signals) -> RuleResult:
+    """R-021 — short current-employment tenure → `short_tenure` (income-stability signal)."""
+    e = sig.epfo
+    if not e.available:
+        return RuleResult(rule_id="R-021")
+    months = _months_since(e.date_of_joining)
+    if months is not None and months < C.SHORT_TENURE_MAX_MONTHS:
+        flag = _flag("short_tenure", "R-021", "R-021-short-tenure",
+                     f"Current employment only ~{months} months (short-tenure signal).",
+                     severity=Severity.moderate, cited=["signals.epfo.date_of_joining"],
+                     ctx={"tenure_months": months})
+        return RuleResult(rule_id="R-021", flags=[flag])
+    return RuleResult(rule_id="R-021")
+
+
+def r022_new_business(sig: Signals) -> RuleResult:
+    """R-022 — business incorporated recently → `new_business` (thin income-history signal
+    for the self-employed). Reads the GST/business registration date."""
+    g = sig.gst
+    if not g.available:
+        return RuleResult(rule_id="R-022")
+    # registration_date is a real Gst field (schemas), so it's a real attr, not model_extra.
+    reg = g.registration_date or (g.model_extra or {}).get("registration_date")
+    months = _months_since(reg)
+    if months is not None and months < C.NEW_BUSINESS_MAX_MONTHS:
+        flag = _flag("new_business", "R-022", "R-022-new-business",
+                     f"Business incorporated ~{months} months ago (thin income history).",
+                     severity=Severity.moderate, cited=["signals.gst.registration_date"],
+                     ctx={"business_age_months": months})
+        return RuleResult(rule_id="R-022", flags=[flag])
+    return RuleResult(rule_id="R-022")
+
+
+# ===========================================================================
 # R-016 — geography guardrail (feeds ML only; never a standalone gate)
 # ===========================================================================
 def r016_geography(sig: Signals) -> RuleResult:
@@ -1089,6 +1167,9 @@ def run_bre(
         r017_rppg(sig),
         r018_litigation(sig),
         r019_gst_alerts(sig),
+        r020_mobile_intel(sig),
+        r021_tenure(sig),
+        r022_new_business(sig),
         consistency_check(inp),
     ]
     results.extend(soft_results)

@@ -34,9 +34,9 @@ NON_MEDICAL_SI_LIMIT_YOUNG = 5_000_000   # age <= 45   # TODO(underwriting-manua
 NON_MEDICAL_SI_LIMIT_SENIOR = 2_500_000  # age 46-55   # TODO(underwriting-manual)
 
 # Max sum-assured that can be auto-issued at all; above → REFER (manual UW).
-# LIFE: raised from the health ₹1cr to ₹2.5cr — life SA runs far higher, and a
+# LIFE: raised from the health ₹1cr to ₹5cr — life SA runs far higher, and a
 # large-SA case should reach financial/moral-hazard reasoning, not instant-refer.
-STP_SI_CEILING = 25_000_000  # ₹2.5 crore  # TODO(underwriting-manual): LIFE
+STP_SI_CEILING = 50_000_000  # ₹5 crore  # TODO(underwriting-manual): LIFE
 
 # ---------------------------------------------------------------------------
 # Income → sum-assured multiple  (R-007)  — LIFE taper
@@ -173,6 +173,44 @@ LITIGATION_FIR_MIN = 1        # >= this many FIRs registered → flag  # TODO(un
 GST_ALERT_KEYS = ("isGstCancelled", "isGstTransactionDelay")  # TODO(underwriting-manual)
 
 # ---------------------------------------------------------------------------
+# Mobile intelligence  (A-mobile)  — genuineness / fraud signals from mobileIntelligence
+# ---------------------------------------------------------------------------
+# A very young number is a classic synthetic-identity / mule signal; a recent port near
+# application time is a SIM-swap / takeover signal; an invalid number breaks contactability.
+# These feed contactability + fraud sub-scores (penalty-only) and cluster into grey-zone.
+MOBILE_RECENT_NUMBER_MAX_MONTHS = 6   # vintage below this → `mobile_recent_number`  # TODO(underwriting-manual)
+MOBILE_INVALID_IS_HARD = True          # numberValid == No → contactability hard signal  # TODO(underwriting-manual)
+
+# ---------------------------------------------------------------------------
+# Employment tenure  (A-tenure)  — income-stability signal from EPFO history
+# ---------------------------------------------------------------------------
+SHORT_TENURE_MAX_MONTHS = 6   # current-job tenure below this → `short_tenure`  # TODO(underwriting-manual)
+
+# ---------------------------------------------------------------------------
+# Business vintage  (A-business)  — income-stability signal from GST/business profile
+# ---------------------------------------------------------------------------
+NEW_BUSINESS_MAX_MONTHS = 12  # business incorporated within this → `new_business`  # TODO(underwriting-manual)
+
+# Map the vendor's free-text natureOfBusiness strings onto the hazard classes above
+# (OCCUPATION_HAZARD_MODIFIER). Substring match, case-insensitive; first hit wins;
+# no match → non_hazardous (unknown trade is not assumed dangerous). Conservative seed —
+# the underwriter owns the full trade→class table.  # TODO(underwriting-manual)
+NATURE_OF_BUSINESS_HAZARD = {
+    "manufactur": "moderate",
+    "factory": "moderate",
+    "mining": "hazardous",
+    "construction": "moderate",
+    "chemical": "hazardous",
+    "transport": "moderate",
+    # services / retail / wholesale / trading → non_hazardous (default, no entry needed)
+}
+
+# ---------------------------------------------------------------------------
+# Mild identity/contactability penalties  (A-misc)  — small, cluster-eligible
+# ---------------------------------------------------------------------------
+AADHAAR_NOT_SEEDED_PENALTY = 8      # pan/identity not Aadhaar-linked  # TODO(underwriting-manual)
+
+# ---------------------------------------------------------------------------
 # Cluster rule  (R-015)
 # ---------------------------------------------------------------------------
 CLUSTER_SOFT_FLAG_MIN = 2  # >= this many soft flags from the cluster set → GREY-ZONE  # TODO(underwriting-manual)
@@ -190,6 +228,13 @@ CLUSTER_FLAG_TYPES = frozenset({
     "over_insurance",             # R-F2/R-F3: SA above HLV/income-multiple or PAN-aggregate
     "cover_stacking",             # R-F3: aggregate in-force cover breaches the cap
     "cross_signal_moral_hazard",  # R-M2 (Phase 3): the combination signal
+    # A-series enrichment flags (mobile / tenure / business genuineness signals). Each is
+    # individually mild; clustering 2+ escalates to grey-zone (weak signals → one concern).
+    "mobile_recent_number",
+    "recent_port",
+    "mobile_invalid",
+    "short_tenure",
+    "new_business",
 })
 
 # ---------------------------------------------------------------------------

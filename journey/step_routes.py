@@ -18,7 +18,7 @@ import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -48,6 +48,27 @@ def _mutate_bundle(app: Application, fn) -> None:
     bundle = copy.deepcopy(dict(app.bundle))
     fn(bundle)
     app.bundle = bundle
+
+
+def _popup_close(status: str) -> HTMLResponse:
+    """The DigiLocker flow runs in a POPUP window (the console stays visible behind it).
+    On completion the popup can't redirect the app — it messages the opener console to
+    refresh its snapshot, then closes itself. `status` ∈ ok|error|mock. If there's no
+    opener (flow opened in a full tab as a fallback), fall back to the old redirect."""
+    return HTMLResponse(f"""<!doctype html><meta charset=utf-8>
+<title>DigiLocker</title>
+<body style="font:14px system-ui;display:grid;place-items:center;height:100vh;margin:0;color:#555">
+<p>Aadhaar e-KYC {'complete' if status == 'ok' else status}. You can close this window.</p>
+<script>
+  try {{
+    if (window.opener && !window.opener.closed) {{
+      window.opener.postMessage({{type:"digilocker",status:"{status}"}}, "*");
+      window.close();
+    }} else {{
+      location.replace("/?step=console&aadhaar={status}");  // opened in a full tab, not a popup
+    }}
+  }} catch (e) {{ location.replace("/?step=console&aadhaar={status}"); }}
+</script>""")
 
 
 def _age_from_dob(dob: str) -> Optional[int]:
@@ -146,6 +167,42 @@ def prefill_retry(app_id: int, request: Request, db: Session = Depends(get_sessi
         return {"success": False, "message": "vendor unavailable — enter details manually"}
 
 
+class PanPrefillRequest(BaseModel):
+    app_id: int
+    pan: str
+
+
+@router.post("/prefill-by-pan")
+def prefill_by_pan(req: PanPrefillRequest, request: Request, db: Session = Depends(get_session)) -> dict:
+    """Flow B (vendor_apis §2): mobile returned no PAN -> user typed their PAN -> fetch the
+    SAME full profile from it and merge (identity/pan/employment/litigation/gst)."""
+    from . import mobile_pan
+    from .auth_routes import _merge_profile_into_bundle
+    app = _require_app(request, req.app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+    pan = (req.pan or "").strip().upper()
+    if len(pan) != 10:
+        return {"success": False, "message": "Enter a valid 10-character PAN."}
+    if not mobile_pan.configured():
+        return {"success": False, "message": "prefill unavailable"}
+    t0 = time.time()
+    try:
+        data = mobile_pan.fetch_by_pan(pan, insurer_slug=app.insurer_slug)
+        _merge_profile_into_bundle(app, data)
+        db.add(app)
+        track_api_call(db, provider="mobile_pan", endpoint="pan-to-profile", mode="real",
+                       application_id=app.id, ok=True, latency_ms=int((time.time()-t0)*1000),
+                       response_summary={"keys": sorted((data or {}).keys())[:12]})
+        track_event(db, event_type="profile_prefilled", application_id=app.id, detail={"via": "pan"})
+        return {"success": True, "pan": (data.get("pan") or pan)}
+    except Exception as e:
+        track_api_call(db, provider="mobile_pan", endpoint="pan-to-profile", mode="real",
+                       application_id=app.id, ok=False, latency_ms=int((time.time()-t0)*1000),
+                       error=str(e)[:200])
+        return {"success": False, "message": "vendor unavailable — try again or enter details manually"}
+
+
 # ---------------------------------------------------------------------------
 # Step 1 — Email intelligence
 # ---------------------------------------------------------------------------
@@ -160,16 +217,39 @@ def set_email(req: EmailRequest, request: Request, db: Session = Depends(get_ses
     if app is None:
         return {"success": False, "message": "unauthorized"}
 
-    # Email intel: real vendor client (sources/email adapter path). For now record the
-    # email as a fact; a live email-intel fetch wires the same way as mobile_pan when its
-    # creds land. We flag mock until then so tracking is honest.
+    # Real email-intel fetch (vendor_apis §3, same Perfios gateway) -> sources/email
+    # adapter (validity + inverted fraud/spam/disposable) -> signals.email_intel, which
+    # the fraud sub-score + grey-zone judge already consume. Falls back to the plain
+    # typed-email fact if EMAIL_* creds are absent or the vendor is down (never blocks, §11).
+    from . import email as email_client
+    intel = {"status": "available", "email": req.email}  # fallback fact
+    mode = "mock"
+    if email_client.configured():
+        t0 = time.time()
+        try:
+            from underwriting.sources import adapt
+            raw = email_client.fetch(req.email, insurer_slug=app.insurer_slug)
+            intel = adapt("email_intel", raw)
+            intel.setdefault("email", req.email)
+            mode = "real"
+            track_api_call(db, provider="email", endpoint="email-intel", mode="real",
+                           application_id=app.id, ok=True, latency_ms=int((time.time()-t0)*1000),
+                           request_summary={"email": req.email},
+                           response_summary={"fraud_risk_score": intel.get("fraud_risk_score"),
+                                             "is_disposable": intel.get("is_disposable")})
+        except Exception as e:  # vendor error must not break Step 1 (§11)
+            track_api_call(db, provider="email", endpoint="email-intel", mode="real",
+                           application_id=app.id, ok=False, latency_ms=int((time.time()-t0)*1000),
+                           error=str(e)[:200])
+    else:
+        track_api_call(db, provider="email", endpoint="(unconfigured — email captured)", mode="mock",
+                       application_id=app.id, ok=True, request_summary={"email": req.email})
+
     def add(bundle):
-        bundle.setdefault("signals", {})["email_intel"] = {"status": "available", "email": req.email}
+        bundle.setdefault("signals", {})["email_intel"] = intel
     _mutate_bundle(app, add)
-    track_api_call(db, provider="email", endpoint="(email captured)", mode="mock",
-                   application_id=app.id, ok=True, request_summary={"email": req.email})
     track_event(db, event_type="email_captured", application_id=app.id, actor="customer",
-                detail={"email": req.email})
+                detail={"email": req.email, "mode": mode})
     db.add(app)
     return {"success": True}
 
@@ -179,19 +259,20 @@ def set_email(req: EmailRequest, request: Request, db: Session = Depends(get_ses
 # ---------------------------------------------------------------------------
 @router.get("/digilocker/start/{app_id}")
 def digilocker_start(app_id: int, request: Request, db: Session = Depends(get_session)):
-    """Kick the DigiLocker flow: call /link, stash accessRequestId, redirect the user
-    to the DigiLocker consent URL. Falls back to a keyed mock if not configured."""
+    """Kick the DigiLocker flow in a POPUP: call /link, stash accessRequestId, redirect
+    the popup to the DigiLocker consent URL. On mock/error/unauth we render the popup-close
+    page (message the console + close) instead of redirecting the popup to the app."""
     app = _require_app(request, app_id, db)
     if app is None:
-        return RedirectResponse("/journey", status_code=303)
+        return _popup_close("error")
 
     _record_consent(db, app, "aadhaar_ekyc", "Aadhaar_Act")
 
     if not digilocker.configured():
-        # Mock fallback: merge a keyed Aadhaar record straight away, no redirect.
+        # Mock fallback: merge a keyed Aadhaar record straight away, then close the popup.
         _merge_mock_aadhaar(db, app)
         db.add(app)
-        return RedirectResponse(f"/journey/app/{app_id}?step=1&aadhaar=mock", status_code=303)
+        return _popup_close("mock")
 
     state = uuid.uuid4().hex
     t0 = time.time()
@@ -215,7 +296,7 @@ def digilocker_start(app_id: int, request: Request, db: Session = Depends(get_se
                        application_id=app.id, ok=False, error=str(e)[:200])
         track_event(db, event_type="digilocker_link_error", application_id=app.id,
                     detail={"error": str(e)[:200]})
-    return RedirectResponse(f"/journey/app/{app_id}?step=1&aadhaar=error", status_code=303)
+    return _popup_close("error")
 
 
 @callback_router.get("/digilocker/callback")
@@ -226,14 +307,14 @@ def digilocker_callback(request: Request, db: Session = Depends(get_session)):
     # the redirect back to our host).
     sess = auth.resolve_session(db, request.cookies.get(auth.COOKIE_NAME))
     if sess is None:
-        return RedirectResponse("/journey", status_code=303)
+        return _popup_close("error")
     app = db.get(Application, sess.application_id)
     if app is None:
-        return RedirectResponse("/journey", status_code=303)
+        return _popup_close("error")
 
     access_id = (app.bundle.get("_journey") or {}).get("digilocker_access_id")
     if not access_id:
-        return RedirectResponse(f"/journey/app/{app.id}?step=1&aadhaar=error", status_code=303)
+        return _popup_close("error")
 
     t0 = time.time()
     try:
@@ -250,13 +331,13 @@ def digilocker_callback(request: Request, db: Session = Depends(get_session)):
                        response_summary={"aadhaar_name": aadhaar.get("name"), "pan": pan.get("pan")})
         track_event(db, event_type="digilocker_fetched", application_id=app.id,
                     detail={"xml_verified": aadhaar.get("xml_verified")})
-        return RedirectResponse(f"/journey/app/{app.id}?step=1&aadhaar=ok", status_code=303)
+        return _popup_close("ok")
     except Exception as e:
         track_api_call(db, provider="digilocker", endpoint="/documents+/download", mode="real",
                        application_id=app.id, ok=False, error=str(e)[:200])
         track_event(db, event_type="digilocker_error", application_id=app.id,
                     detail={"error": str(e)[:200]})
-        return RedirectResponse(f"/journey/app/{app.id}?step=1&aadhaar=error", status_code=303)
+        return _popup_close("error")
 
 
 def _merge_aadhaar(db: Session, app: Application, aadhaar: dict, pan: dict) -> None:
@@ -484,11 +565,16 @@ def set_health(req: HealthRequest, request: Request, db: Session = Depends(get_s
 
     def add(bundle):
         hd = bundle.setdefault("application", {}).setdefault("health_declaration", {})
+        # Live edits must be able to RETRACT, not just add — so lists/text overwrite even when
+        # emptied (answering No clears the conditions/family it had). Booleans + numbers still
+        # only write when provided (None = "field not in this partial", leave as-is).
         hd["conditions"] = req.conditions
-        for k in ("height_cm", "weight_kg", "tobacco", "alcohol", "drugs",
-                  "ongoing_medication", "past_medical_history", "family_history"):
+        hd["family_history"] = req.family_history
+        for k in ("ongoing_medication", "past_medical_history"):
+            hd[k] = getattr(req, k)   # may be None → cleared
+        for k in ("height_cm", "weight_kg", "tobacco", "alcohol", "drugs"):
             v = getattr(req, k)
-            if v is not None and v != []:
+            if v is not None:
                 hd[k] = v
         if bmi is not None:
             hd["bmi"] = bmi
@@ -748,12 +834,34 @@ _RAIL_GROUPS = [
 # CHIP display is scoped, so the underwriter isn't shown a wall of idle chips.
 _STEP_GROUPS = {
     1: ["identity_kyc", "contactability", "fraud_check", "litigation_fir", "occupation_employer"],
-    2: ["financial", "insurance_portfolio"],
+    # Step 2 (Product & Cover) collects only the cover CHOICE, which produces no scorer
+    # signal of its own — the SI-ceiling reaction is a synthetic "Cover" chip built from
+    # R-006 (see _cover_chip, prepended in rail()). The one thing that DID just return is
+    # the email intel fetched on the Step-1→2 Continue, so its two groups (fraud_check +
+    # contactability) belong here. Financial/insurance_portfolio removed: financial's inputs
+    # (declared income / statement) arrive in Step 3, and no IIB source is fetched in the
+    # journey at all — both were structurally guaranteed "awaiting source" here.
+    2: ["fraud_check", "contactability"],
     3: ["financial"],
-    4: ["medical", "lifestyle", "fraud_check", "velocity_graph", "geography"],
+    # velocity_graph + geography removed: no journey step fetches those signals, so both
+    # are structurally guaranteed "awaiting source" here (same reason financial/IIB were
+    # dropped from Step 2). The composite score still spans all groups — only the chips are scoped.
+    4: ["medical", "lifestyle", "fraud_check"],
     5: [g[0] for g in _RAIL_GROUPS],   # decision — everything the agent weighed
     6: [g[0] for g in _RAIL_GROUPS],
     7: [g[0] for g in _RAIL_GROUPS],
+}
+
+# Step 4 has THREE sub-steps; the rail scopes chips to the ACTIVE sub-step the same way
+# _STEP_GROUPS scopes chips to a step. Mapped to what each sub-step collects + the scorer
+# reads (see the per-sub-step analysis): Health decl → Medical (conditions / prior-decline);
+# Vitals → Lifestyle (tobacco) + Medical (BMI + family history both land in _s_medical);
+# Face/ABHA → Face&deepfake (liveness/R-003) + Medical (ABHA corroboration). Medical spans
+# all three because it accumulates. An idle chip still hides (rail() drops idle step-4 chips).
+_STEP4_SUB_GROUPS = {
+    0: ["medical"],                        # Health declaration
+    1: ["lifestyle", "medical"],           # Vitals & lifestyle
+    2: ["fraud_check", "medical"],         # Face scan & ABHA
 }
 
 # 0-100 sub-score -> risk LEVEL, the SAME map report._level uses (config.safety_band
@@ -761,11 +869,117 @@ _STEP_GROUPS = {
 _LEVEL = {"Low Risk": "ok", "Moderate Risk": "warn", "High Risk": "bad"}
 
 
-def _group_has_data(group_key: str, bundle: dict) -> bool:
+def _email_why(bundle: dict, kind: str) -> Optional[str]:
+    """Email-specific reason text for the Step-2 fraud/contactability chips, built from the
+    real email_intel facts so the chip reads as an EMAIL check (not a generic verdict).
+    kind ∈ 'fraud' | 'contact'. None if email intel isn't present (chip keeps its default)."""
+    em = (bundle.get("signals", {}) or {}).get("email_intel") or {}
+    if not em or em.get("status") == "unavailable":
+        return None
+    addr = em.get("email")
+    if not addr:
+        return None
+    bad = []
+    if em.get("is_disposable") is True:
+        bad.append("disposable domain")
+    if em.get("is_spam") is True:
+        bad.append("on spam record")
+    efs = em.get("fraud_risk_score")
+    if kind == "fraud":
+        if bad:
+            return f"{addr}: " + ", ".join(bad)
+        if isinstance(efs, (int, float)) and efs >= 0.3:
+            return f"{addr}: flagged as higher-risk"
+        return f"{addr}: genuine domain, no risk flags"
+    # contactability
+    if em.get("name_match") is False:
+        return f"{addr}: does not match the applicant's name"
+    return f"{addr}: valid and matches the applicant"
+
+
+def _inr_cover(n) -> str:
+    """₹ short-form for a sum insured (₹2 Cr / ₹50 L), used in the Cover chip reason."""
+    n = int(n or 0)
+    if n >= 10_000_000:
+        cr = n / 10_000_000
+        return f"₹{cr:.0f} Cr" if cr == int(cr) else f"₹{cr:.1f} Cr"
+    if n >= 100_000:
+        return f"₹{n // 100_000} L"
+    return f"₹{n:,}"
+
+
+def _cover_chip(sum_insured: int) -> Optional[dict]:
+    """Step-2 synthetic 'Cover' chip: the agent's read on the CHOSEN sum insured.
+
+    Not a scorer group — the cover choice produces no Safety-Score sub-score. The one
+    underwriting reaction it drives is R-006 (SI above the STP auto-issue ceiling → manual
+    referral). Severity comes from calling the REAL R-006 rule on the SI, so it can never
+    contradict the Step-5 verdict — and the ceiling lives ONLY in config.STP_SI_CEILING
+    (via the rule), no threshold duplicated in the UI. Calling the rule directly (not
+    reading bre.hard_gate) lets the chip react to the live-selected SI before it's saved.
+    Returns None if no SI is chosen yet (chip simply doesn't render)."""
+    from underwriting import config as C
+    from underwriting.rules import r006_si_ceiling
+    from underwriting.schemas import RuleOutcome
+    if not sum_insured:
+        return None
+    ceiling = C.STP_SI_CEILING
+    referred = r006_si_ceiling(int(sum_insured)).outcome == RuleOutcome.HARD_REFER
+    if referred:
+        return {
+            "key": "cover", "label": "Cover", "gate": True,
+            "sub_score": 0, "severity": "warn",   # amber: goes to a human, not a decline
+            "why": f"{_inr_cover(sum_insured)} is above the {_inr_cover(ceiling)} "
+                   f"auto-issue limit — needs a manual underwriter",
+        }
+    return {
+        "key": "cover", "label": "Cover", "gate": True,
+        "sub_score": 100, "severity": "ok",
+        "why": f"{_inr_cover(sum_insured)} can be auto-issued · income check in the next step",
+    }
+
+
+def _persona(bundle: dict) -> str:
+    """Classify the applicant from the prefill facts so the rail can adapt (an underwriter
+    looks at EPFO for a salaried employee, GST/business for an owner). Returns
+    'salaried' | 'self_employed' | 'both' | 'unknown'. Salaried = EPFO present; self-employed
+    = GST present. Both = both. Drives which Step-1 chips show and whether GST is prominent."""
+    sig = bundle.get("signals", {}) or {}
+    epfo = sig.get("epfo") or {}
+    gst = sig.get("gst") or {}
+    has_epfo = epfo.get("status") == "available" and (epfo.get("employer") or epfo.get("uan"))
+    has_gst = gst.get("status") == "available" and (gst.get("gstin") or gst.get("gstin_count"))
+    if has_epfo and has_gst:
+        return "both"
+    if has_gst:
+        return "self_employed"
+    if has_epfo:
+        return "salaried"
+    return "unknown"
+
+
+# Which Step-1 groups show per persona (an underwriter's view differs by applicant type).
+# The self-employed / both personas surface occupation prominently (it carries GST/business);
+# salaried keeps the lean identity-first view. Composite score still spans ALL groups.
+_STEP1_GROUPS_BY_PERSONA = {
+    "salaried":      ["identity_kyc", "contactability", "fraud_check", "litigation_fir", "occupation_employer"],
+    "self_employed": ["identity_kyc", "occupation_employer", "litigation_fir", "fraud_check", "contactability"],
+    "both":          ["identity_kyc", "occupation_employer", "contactability", "fraud_check", "litigation_fir"],
+    "unknown":       ["identity_kyc", "contactability", "fraud_check", "litigation_fir", "occupation_employer"],
+}
+
+
+def _group_has_data(group_key: str, bundle: dict, step: int = 5) -> bool:
     """True once ANY input the group's sub-scorer (scoring.py) reads is present in the
     bundle — signal OR application-declared fact. Mirrors each `_s_*` scorer's inputs so
     an assessed group never shows 'idle' and an untouched one never shows a green 'clean'.
-    Keep this in lockstep with scoring.py's per-group inputs."""
+    Keep this in lockstep with scoring.py's per-group inputs.
+
+    `step` scopes the STEP-4 chips to evidence produced ON step 4 (the health screen):
+    Lifestyle→vitals answered here (not the Step-3 bank statement), Face→a scan run here
+    (not a prior liveness read). So landing on Health with all 'No' shows NO chips, and
+    each lights only as its own sub-step's evidence lands. The composite score is unaffected
+    (it always spans every group via safety_score) — this gates the CHIP display only."""
     sig = bundle.get("signals", {}) or {}
     appn = bundle.get("application", {}) or {}
     hd = appn.get("health_declaration") or {}
@@ -789,10 +1003,26 @@ def _group_has_data(group_key: str, bundle: dict) -> bool:
         return bool(occ.get("declared_type")) or avail("mca_director") or avail("epfo") \
             or avail("gst") or avail("occupation_hazard")
     if group_key == "medical":
-        return bool(hd) or avail("abha_health_records") or avail("pre_policy_medical")
+        # Declared facts the scorer now reads deterministically (real-time, no ABHA needed):
+        # a declared CONDITION, family history, or a prior insurance decline. Any of them
+        # lights the Medical chip on its own screen; else wait for ABHA/labs.
+        declared_adverse = bool(hd.get("conditions")) or bool(hd.get("family_history")) \
+            or bool(hd.get("past_medical_history"))
+        return declared_adverse or avail("abha_health_records") or avail("pre_policy_medical")
     if group_key == "lifestyle":
-        return bool(hd) or avail("facial_bmi_smoking") or avail("account_aggregator")
+        # Lifestyle IS assessed by the declaration — but only once tobacco/alcohol is
+        # actually answered (an empty hd hasn't answered anything).
+        answered = any(hd.get(k) is not None for k in ("tobacco", "alcohol", "drugs"))
+        if step == 4:
+            # On the health screen the lifestyle chip is the VITALS answer, not the
+            # Step-3 bank-statement spend read — don't carry AA over as "assessed here".
+            return answered or avail("facial_bmi_smoking")
+        return answered or avail("facial_bmi_smoking") or avail("account_aggregator")
     if group_key == "fraud_check":
+        if step == 4:
+            # Step-4 fraud chip = the FACE SCAN (liveness/deepfake) run here, not the
+            # email intel from Step 1 (that already showed on Steps 1/2).
+            return avail("liveness_facematch")
         return avail("email_intel") or avail("liveness_facematch") or avail("ml_scores")
     if group_key == "litigation_fir":
         return isinstance(sig.get("litigation_fir"), dict) and bool(sig["litigation_fir"])
@@ -822,9 +1052,11 @@ def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -
         "application_number": app.application_number,
         "current_step": app.current_step,
         "status": app.status,
+        "created_at": app.created_at.isoformat() if app.created_at else None,  # UTC; UI -> IST
         "applicant": application.get("applicant", {}) or {},
         "financial": application.get("financial", {}) or {},   # Step 3 pre-fill on revisit
         "product": application.get("product", {}) or {},       # Step 7 amount-due fallback (?start=7 / refresh)
+        "health_declaration": application.get("health_declaration", {}) or {},  # Step 4 pre-fill on revisit
         "signals": {
             "pan_verify": signals.get("pan_verify", {}) or {},
             "mobile_intel": signals.get("mobile_intel", {}) or {},
@@ -843,12 +1075,20 @@ def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -
 
 
 @router.get("/rail/{app_id}")
-def rail(app_id: int, request: Request, step: int = 5,
+def rail(app_id: int, request: Request, step: int = 5, si: int = 0, sub: int = 0,
          db: Session = Depends(get_session)) -> dict:
     """The live agent-signal rail: run rules+scoring on the partial bundle, return
     the current step's per-group chips (sub-score + severity + reason). Polled by the
     console JS with ?step=N. The composite score always spans ALL groups; only the
-    chip DISPLAY is scoped to the step (JOURNEY_PLAN §2). Unknown step -> full read."""
+    chip DISPLAY is scoped to the step (JOURNEY_PLAN §2). Unknown step -> full read.
+
+    `si` (Step-2 only): the sum insured currently SELECTED in the product picker, before
+    Continue persists it. When present it overrides the bundle's saved SI so the Cover chip
+    (R-006) reacts live as the underwriter toggles the cover, without a premature persist.
+
+    `sub` (Step-4 only): the active health sub-step (0 Health · 1 Vitals · 2 Face/ABHA), so
+    the chip list is scoped to that sub-step (_STEP4_SUB_GROUPS) — the same scoping Steps 1–3
+    get per step, now applied per sub-step. Score gauge stays the full accumulated read."""
     app = _require_app(request, app_id, db)
     if app is None:
         return {"success": False, "message": "unauthorized"}
@@ -867,7 +1107,18 @@ def rail(app_id: int, request: Request, step: int = 5,
     except Exception as e:  # partial bundle not yet valid -> rail simply stays idle
         return {"success": True, "safety_score": None, "band": None, "groups": [], "note": str(e)[:120]}
 
-    show = set(_STEP_GROUPS.get(step, [g[0] for g in _RAIL_GROUPS]))
+    # Step 1 adapts to WHO the applicant is (salaried vs self-employed vs both); later
+    # steps use the fixed step->group map. The occupation chip is relabeled + carries
+    # business/GST context for the self-employed personas.
+    persona = _persona(raw)
+    if step == 1:
+        show = set(_STEP1_GROUPS_BY_PERSONA.get(persona, _STEP1_GROUPS_BY_PERSONA["unknown"]))
+    elif step == 4:
+        # Scope to the ACTIVE health sub-step, not all of Step 4 (so Vitals/Face chips don't
+        # show on the Health screen). Unknown sub → full Step-4 set as a safe fallback.
+        show = set(_STEP4_SUB_GROUPS.get(sub, _STEP_GROUPS[4]))
+    else:
+        show = set(_STEP_GROUPS.get(step, [g[0] for g in _RAIL_GROUPS]))
     by_group = {r.source_group: r for r in rows}
     groups = []
     for key, label in _RAIL_GROUPS:
@@ -876,45 +1127,139 @@ def rail(app_id: int, request: Request, step: int = 5,
         r = by_group.get(key)
         if r is None:
             continue
-        has_data = _group_has_data(key, raw)
+        has_data = _group_has_data(key, raw, step)
+        # Step 4 reveals chips AS their evidence lands (no cold placeholders): Lifestyle when
+        # tobacco/BMI is answered, Medical + Face/deepfake after the face-scan & ABHA fetch.
+        # An idle Step-4 chip is a source not yet triggered on this page -> don't render it.
+        if step == 4 and not has_data:
+            continue
+        # Step-4 fraud IS the face-scan / deepfake check (email fraud already showed on Step 1/2).
+        if step == 4 and key == "fraud_check":
+            label = "Face & deepfake"
+        # For a self-employed / both applicant, the occupation group IS the "Business & GST"
+        # view — relabel it so the underwriter reads it as such (an owner has no employer chip).
+        if key == "occupation_employer" and persona in ("self_employed", "both"):
+            label = "Business & GST"
+        # Step 2's fraud/contactability chips are driven ONLY by the email intel that just
+        # returned (not the full fraud/contactability read — that accumulates by Step 5).
+        # Relabel so the underwriter reads them as the EMAIL check, not a generic verdict.
+        if step == 2 and key == "fraud_check":
+            label = "Email fraud"
+        if step == 2 and key == "contactability":
+            label = "Email contactability"
         # severity/reason from the SAME scorer the report uses; unchecked group -> idle
         # so a not-yet-returned source never shows a green "clean" it hasn't earned.
         severity = _LEVEL[C.safety_band(r.risk_sub_score)] if has_data else "idle"
+        why = r.why if has_data else "awaiting source"
+        # Step 2: replace the generic scorer `why` with EMAIL-specific text (the chip is the
+        # email check here, not the accumulated fraud/contactability read).
+        if step == 2 and has_data and key in ("fraud_check", "contactability"):
+            ew = _email_why(raw, "fraud" if key == "fraud_check" else "contact")
+            if ew:
+                why = ew
         g = {
             "key": key, "label": label,
             "sub_score": r.risk_sub_score,
             "severity": severity,          # ok | warn | bad | idle
-            "why": r.why if has_data else "awaiting source",
+            "why": why,
         }
         # Financial group carries read-only context sub-items the underwriter cross-checks
         # against declared income (GST turnover is a real fetched fact; vehicle + imputed
         # income are backend-fed, blank/null until their bundle fields land — no theatre).
         if key == "financial":
             g["context"] = _financial_context(raw)
+        # Occupation for the self-employed shows the business/GST facts as context rows.
+        if key == "occupation_employer" and persona in ("self_employed", "both"):
+            g["context"] = _business_context(raw)
         groups.append(g)
-    return {"success": True, "safety_score": ss.value, "band": ss.band, "groups": groups}
+    # Step 2 (Product & Cover): prepend the synthetic Cover chip — the agent's read on the
+    # sum insured the applicant just chose (R-006 SI-ceiling). It leads the rail because it's
+    # the one signal THIS step's own input produces. Uses the live-selected `si` override
+    # when present (picker not yet saved), else the bundle's saved SI.
+    if step == 2:
+        product = (raw.get("application", {}) or {}).get("product", {}) or {}
+        eff_si = si or product.get("sum_assured") or 0
+        cover = _cover_chip(eff_si)
+        if cover is not None:
+            groups.insert(0, cover)
+    # Provisional-score context: how many of ALL source groups have actually returned data
+    # (not just the current step's chips). The UI uses this to label an early score
+    # "provisional — N of M sources in" so a 100 at Step 1 isn't read as a final verdict.
+    assessed_count = sum(1 for k, _ in _RAIL_GROUPS if _group_has_data(k, raw))
+    total_count = len(_RAIL_GROUPS)
+    return {"success": True, "safety_score": ss.value, "band": ss.band, "groups": groups,
+            "persona": persona,
+            "assessed_count": assessed_count, "total_count": total_count}
+
+
+def _business_context(bundle: dict) -> list[dict]:
+    """Business & GST rail context for the self-employed: {label, value} rows.
+    value=None renders as '—'. All real fetched facts from the mobile/PAN prefill."""
+    gst = (bundle.get("signals", {}) or {}).get("gst") or {}
+    statuses = gst.get("statuses") or []
+    gst_status = ("Cancelled" if gst.get("any_cancelled")
+                  else (statuses[0] if statuses else gst.get("status")))
+    nature = gst.get("nature_of_business") or []
+    reg = gst.get("registration_date")
+    return [
+        {"label": "GST status", "value": gst_status if gst_status not in (None, "available") else None},
+        {"label": "GSTINs", "value": (str(gst.get("gstin_count")) if gst.get("gstin_count") else None)},
+        {"label": "Turnover", "value": gst.get("turnover_slab")},
+        {"label": "Business since", "value": reg},
+        {"label": "Nature", "value": (", ".join(nature) if nature else None)},
+    ]
 
 
 def _financial_context(bundle: dict) -> list[dict]:
     """Financial-group rail context: {label, value} rows. value=None renders as '—'
-    (awaiting source). GST turnover is populated today; vehicle + imputed income are
-    placeholders wired to their intended bundle paths (backend fills them later)."""
+    (awaiting source). GST turnover + imputed income are real fetched facts; vehicle is a
+    not-yet-wired placeholder. The cover/income + declared/imputed rows make the two
+    comparisons the scorer already checks (R-006/R-007 multiple, declared-vs-statement gap)
+    visible as facts, not just penalty lines."""
     sig = bundle.get("signals", {}) or {}
+    appn = bundle.get("application", {}) or {}
     gst = sig.get("gst") or {}
-    # intended bundle paths for the not-yet-wired signals (blank until backend emits them):
     vehicle = sig.get("vehicle") or {}                 # signals.vehicle.* (RTO / vahan lookup)
     aa = sig.get("account_aggregator") or {}
-    return [
+    imputed = aa.get("imputed_annual_income")
+    declared = (appn.get("financial") or {}).get("declared_annual_income")
+    si = (appn.get("product") or {}).get("sum_assured")
+    income = imputed or declared                       # best income basis for the cover multiple
+    # Only real, non-duplicated facts. The comparison rows carry the raw ₹ figures, so no
+    # standalone imputed/declared rows. All ₹ values are short words (₹50 L / ₹2.18 Cr).
+    balance = aa.get("avg_monthly_balance")
+    e2i = aa.get("expense_to_income")            # 0.0 is a real value ("0% obligations"), not absent
+    rows = [
         {"label": "GST turnover", "value": gst.get("turnover_slab")},
-        {"label": "Vehicle", "value": vehicle.get("model") or vehicle.get("registration")},
-        {"label": "Imputed income", "value": _inr(vehicle.get("imputed_annual_income")
-                                                or aa.get("imputed_annual_income"))},
+        {"label": "Assets", "value": vehicle.get("model") or vehicle.get("registration")
+                                     or aa.get("physical_assets")},
+        {"label": "Avg balance", "value": _inr(balance)},
+        {"label": "Obligations", "value": (f"{e2i*100:.0f}% of income"
+                                           if isinstance(e2i, (int, float)) else None)},
     ]
+    if si and income:
+        rows.append({"label": "Cover / income", "value": f"{_inr(si)} → {si/income:.1f}× income"})
+    if declared and imputed:
+        rows.append({"label": "Declared vs actual",
+                     "value": f"{_inr(declared)} vs {_inr(imputed)} · {abs(declared-imputed)/declared*100:.0f}% gap"})
+    elif imputed:  # no declared income to compare against yet — show the raw figure
+        rows.append({"label": "Imputed income", "value": _inr(imputed)})
+    return rows
 
 
 def _inr(n) -> Optional[str]:
-    """₹ format an int amount for a rail value, or None (-> '—') when absent."""
-    return ("₹{:,}".format(int(n))) if isinstance(n, (int, float)) and n else None
+    """₹ amount as short Indian words for a rail value ("₹50 L", "₹2.18 Cr"), or None
+    (-> '—') when absent. Reads at a glance; the rail has no room for full digit strings."""
+    if not (isinstance(n, (int, float)) and n):
+        return None
+    n = float(n)
+    if n >= 1e7:
+        v = n / 1e7
+        return f"₹{v:.2f}".rstrip("0").rstrip(".") + " Cr"
+    if n >= 1e5:
+        v = n / 1e5
+        return f"₹{v:.2f}".rstrip("0").rstrip(".") + " L"
+    return "₹{:,}".format(int(n))
 
 
 # ---------------------------------------------------------------------------

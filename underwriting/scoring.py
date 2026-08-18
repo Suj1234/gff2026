@@ -23,6 +23,7 @@ are tagged `# TODO(underwriting-manual)` like every other threshold.
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from . import config as C
@@ -331,6 +332,10 @@ def _s_identity(inp, bre, flags) -> tuple[float, list[str], bool]:
         p.append((28, "CKYC field mismatch (name/DOB/address)"))
     if "mobile_pan_mismatch" in flags:
         p.append((5, "mobile holder-name mismatch"))
+    # PAN not Aadhaar-linked = weaker KYC completeness (mild). aadhaar_seeded is a fact
+    # from pan_verify; only penalize when the source is present and explicitly not seeded.
+    if sig.pan_verify.available and (sig.pan_verify.model_extra or {}).get("aadhaar_seeded") is False:
+        p.append((C.AADHAAR_NOT_SEEDED_PENALTY, "PAN not Aadhaar-linked (weaker KYC)"))
     # Assessed if any identity source arrived (PAN / Aadhaar / liveness / CKYC).
     assessed = any(s.available for s in (
         sig.pan_verify, sig.aadhaar_ekyc, sig.liveness_facematch, sig.ckyc))
@@ -339,10 +344,23 @@ def _s_identity(inp, bre, flags) -> tuple[float, list[str], bool]:
 
 def _s_contactability(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
+    mi = sig.mobile_intel
+    mx = mi.model_extra or {}
     p = []
     if "mobile_pan_mismatch" in flags:
         p.append((10, "mobile holder-name mismatch"))
-    assessed = sig.mobile_intel.available or sig.email_intel.available
+    if mi.available:
+        # Invalid number = a real contactability failure (hard-ish).
+        if mx.get("number_valid") is False:
+            p.append((25, "mobile number not valid / unreachable"))
+        # Very young number = synthetic-identity / mule signal (also a fraud signal below).
+        vm = mi.vintage_months if mi.vintage_months is not None else mx.get("vintage_months")
+        if isinstance(vm, (int, float)) and vm < C.MOBILE_RECENT_NUMBER_MAX_MONTHS:
+            p.append((15, f"mobile number only {int(vm)}mo old (recent)"))
+        # Region shift (current != original) is a mild mule/relocation signal.
+        if mx.get("region_shift") is True:
+            p.append((6, "mobile current region differs from original"))
+    assessed = mi.available or sig.email_intel.available
     return _result(p, assessed, "email/mobile clean")
 
 
@@ -351,7 +369,10 @@ def _s_occupation(inp, bre, flags) -> tuple[float, list[str], bool]:
     p = []
     if sig.mca_director.available and sig.mca_director.director_default is True:
         p.append((35, "MCA director marked defaulter"))
-    haz = (sig.occupation_hazard.hazard_class or "non_hazardous").lower()
+    # Hazard class: explicit occupation_hazard source first, else DERIVE from the
+    # self-employed's natureOfBusiness (previously dropped). Manufacturing/mining/etc.
+    # map to a hazard class; unknown trade stays non_hazardous (never assume danger).
+    haz = (sig.occupation_hazard.hazard_class or _hazard_from_nature(sig) or "non_hazardous").lower()
     haz_extra, _ = C.OCCUPATION_HAZARD_MODIFIER.get(haz, (0, None))
     if haz_extra:
         p.append((haz_extra, f"hazardous occupation class '{haz}'"))
@@ -361,10 +382,31 @@ def _s_occupation(inp, bre, flags) -> tuple[float, list[str], bool]:
         cancelled = bool(ga and ga.context.get("cancelled"))
         p.append((20 if cancelled else 10,
                   "GST cancelled" if cancelled else "GST filing/transaction delay"))
+    # Short current-job tenure = income-stability risk (mild).
+    if "short_tenure" in flags:
+        p.append((8, "short current-employment tenure"))
     # Assessed if any employment/occupation source arrived (EPFO / MCA / GST / hazard).
     assessed = any(s.available for s in (
         sig.epfo, sig.mca_director, sig.gst, sig.occupation_hazard))
     return _result(p, assessed, "EPF verified, non-hazardous")
+
+
+def _hazard_from_nature(sig) -> Optional[str]:
+    """Derive a hazard class from the self-employed's natureOfBusiness strings (gst signal).
+    Substring match against C.NATURE_OF_BUSINESS_HAZARD; most-severe hit wins. None if the
+    gst source is absent or no trade matches (→ caller defaults to non_hazardous)."""
+    gx = sig.gst.model_extra or {}
+    trades = gx.get("nature_of_business") or []
+    if not trades:
+        return None
+    order = {"non_hazardous": 0, "moderate": 1, "hazardous": 2, "extreme": 3}
+    best = None
+    for t in trades:
+        tl = str(t).lower()
+        for needle, cls in C.NATURE_OF_BUSINESS_HAZARD.items():
+            if needle in tl and (best is None or order.get(cls, 0) > order.get(best, 0)):
+                best = cls
+    return best
 
 
 def _s_financial(inp, bre, flags) -> tuple[float, list[str]]:
@@ -376,11 +418,12 @@ def _s_financial(inp, bre, flags) -> tuple[float, list[str]]:
     if declared and imputed:
         gap = abs(declared - imputed) / declared
         if gap >= 0.05:
-            p.append((22, f"declared vs bank-statement income gap {gap*100:.0f}%"))
+            p.append((22, f"declared income ₹{declared:,} vs bank-statement ₹{imputed:,} "
+                          f"— {gap*100:.0f}% apart"))
     if "income_thin_file" in flags:
-        p.append((15, "requested SI exceeds income multiple"))
+        p.append((15, "requested cover is high for the income on record"))
     if "thin_file" in flags:
-        p.append((10, "income evidence is AA-fallback only"))
+        p.append((10, "income backed only by bank statement (no ITR or salary records to confirm it)"))
     cb = sig.credit_bureau
     if cb.available and cb.total_outstanding and imputed and cb.total_outstanding > imputed:
         ratio = cb.total_outstanding / imputed
@@ -389,9 +432,13 @@ def _s_financial(inp, bre, flags) -> tuple[float, list[str]]:
     an = risk_scores(inp, bre).anomaly_score
     if an and an >= C.ML_SCORE_HIGH_MIN:
         p.append((10, f"anomaly score {an} in high band"))
+    # Brand-new business = thin income history (self-employed income-stability signal).
+    if "new_business" in flags:
+        p.append((10, "business recently incorporated (thin income history)"))
     # Assessed if we have any financial fact: a declared income, AA/ITR, or bureau.
+    # A self-employed applicant's GST turnover is also a financial corroboration source.
     assessed = bool(declared) or sig.account_aggregator.available \
-        or sig.itr.available or sig.credit_bureau.available
+        or sig.itr.available or sig.credit_bureau.available or sig.gst.available
     return _result(p, assessed, "income corroborated, debt in range")
 
 
@@ -427,8 +474,86 @@ def _s_lifestyle(inp, bre, flags) -> tuple[float, list[str], bool]:
     return _result(p, assessed, "no adverse lifestyle indicators in facts")
 
 
+# Family-history conditions that carry a mortality signal when onset is premature.
+_HEREDITARY_MORTALITY = ("heart", "cardiac", "stroke", "cancer", "diabetes", "kidney")
+_PREMATURE_ONSET_AGE = 55   # <55 = premature per standard fam-hx underwriting  # TODO(underwriting-manual)
+# Phrases the prior-decline screener answer contains (past_medical_history free-text).
+_PRIOR_ADVERSE = ("declin", "deferred", "postpon", "higher premium", "loaded", "rejected")
+
+
+def _family_history_penalty(fh: list[str]) -> Optional[tuple[float, str]]:
+    """Premature-onset (<55) family history of a mortality-relevant condition is a
+    standard adverse signal. Entries look like 'Father: Diabetes @ 52' — parse the
+    condition + optional '@ age' and flag only mortality conditions with early onset."""
+    hits = []
+    for e in fh:
+        body = e.split(":", 1)[1] if ":" in e else e
+        cond = body.split("@")[0].split("—")[0].strip().lower()
+        if not any(h in cond for h in _HEREDITARY_MORTALITY):
+            continue
+        m = re.search(r"@\s*(\d{1,3})", body)
+        # No age given → count the mortality-relevant hit but at the premature weight
+        # only if an age proves it (unknown age is a milder signal, still worth noting).
+        if m and int(m.group(1)) < _PREMATURE_ONSET_AGE:
+            hits.append(f"{cond} onset age {m.group(1)}")
+    if not hits:
+        return None
+    return (min(6 * len(hits), 16), "premature family history: " + "; ".join(hits))
+
+
+def _prior_decline_penalty(pmh: Optional[str]) -> Optional[tuple[float, str]]:
+    """A prior insurance decline/postpone/loading disclosed in the past-history free
+    text is a standard adverse underwriting signal (another insurer already balked)."""
+    if pmh and any(k in pmh.lower() for k in _PRIOR_ADVERSE):
+        return (12, "prior insurance proposal declined/deferred/loaded (disclosed)")
+    return None
+
+
+# Deterministic per-condition mortality weight for a DECLARED condition (keyed on a
+# distinctive substring of the exact UI label — HealthStep.MEDICAL_CONDITIONS). This makes
+# a declaration score in REAL TIME on its own screen, not wait for ABHA. ABHA still runs to
+# corroborate/catch non-disclosure separately. A "controlled" flag in the condition text
+# halves the weight (managed disease is lower mortality). Magnitudes # TODO(underwriting-manual).
+_DECLARED_CONDITION_PTS = {
+    "cancer":        22, "tumour": 22, "tumor": 22,
+    "heart":         18, "cardiac": 18,
+    "stroke":        18, "tia": 18,
+    "kidney":        16, "renal": 16,
+    "liver":         14, "hepatitis": 14,
+    "diabetes":      12,
+    "epilepsy":      10, "neurolog": 10,
+    "tuberculosis":  10,
+    "high blood pressure": 9, "hypertension": 9,
+    "depression":    8, "anxiety": 8,
+    "asthma":        6, "respiratory": 6,
+    "high cholesterol": 6, "cholesterol": 6,
+    "thyroid":       4,
+}
+
+
+def _declared_condition_penalties(conditions: list[str]) -> list[tuple[float, str]]:
+    """One deterministic penalty per declared condition. Disclosure is NOT free of a
+    mortality signal — a declared diabetic IS higher risk than a clean life — but it's
+    scored transparently (and never as harshly as a CONCEALED one, which R-010 catches).
+    'controlled' in the text halves the weight."""
+    out = []
+    for raw in conditions or []:
+        t = raw.lower()
+        pts = next((v for k, v in _DECLARED_CONDITION_PTS.items() if k in t), None)
+        if pts is None:
+            continue
+        controlled = "controlled" in t and "not controlled" not in t and "uncontrolled" not in t
+        if controlled:
+            pts = round(pts / 2, 1)
+        # Echo the condition name (the part before the first em-dash/space-detail) for the chip.
+        name = re.split(r"\s+[—-]\s+", raw, maxsplit=1)[0].strip()
+        out.append((pts, f"{name} declared{' (controlled)' if controlled else ''}"))
+    return out
+
+
 def _s_medical(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
+    hd = inp.application.health_declaration
     p = []
     if "non_disclosure_signal" in flags:
         # Confirmed non-disclosure is the most severe medical signal (§ decision #2).
@@ -451,12 +576,25 @@ def _s_medical(inp, bre, flags) -> tuple[float, list[str], bool]:
         p.append((min(3 * lows, 9), f"{lows} lab value(s) low vs reference range"))
     if bre.loading_pct and bre.loading_pct > 0:
         p.append((min(bre.loading_pct / 5, 10), f"BMI/age loading +{bre.loading_pct:g}%"))
-    # Assessed if any medical evidence arrived: a pre-policy exam, ABHA, or pharmacy.
-    # The health DECLARATION alone is NOT proof labs were checked — but if the exam
+    # DECLARED conditions score deterministically in real time (diabetes → −12, etc.),
+    # so ticking a condition moves Medical on its own screen — not waiting for ABHA.
+    p.extend(_declared_condition_penalties(hd.conditions))
+    # Declared-fact medical signals the form collects but the engine used to ignore:
+    # premature family history + a prior insurance decline. Both are standard adverse
+    # markers. As penalties they make _result assess the group (a flagged declaration
+    # IS a medical read); an empty declaration adds nothing and the absent-source gate
+    # below still holds.
+    for fn in (_family_history_penalty(hd.family_history),
+               _prior_decline_penalty(hd.past_medical_history)):
+        if fn:
+            p.append(fn)
+    # Assessed if any medical evidence arrived: a pre-policy exam, ABHA, or pharmacy, OR
+    # a DECLARED condition (a declaration IS a medical read now that it scores). If the exam
     # is absent, the "labs in range" clean text must not be asserted (the core bug).
-    assessed = ppm.available or sig.abha_health_records.available or sig.pharmacy.available
+    assessed = (ppm.available or sig.abha_health_records.available or sig.pharmacy.available
+                or bool(hd.conditions))
     clean = ("no undisclosed conditions; labs in range" if ppm.available
-             else "no undisclosed conditions on available evidence")
+             else "no conditions declared; no adverse evidence on file")
     return _result(p, assessed, clean)
 
 
