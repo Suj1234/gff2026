@@ -22,6 +22,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # The full app: agent + journey backend.
 COPY underwriting ./underwriting
 COPY journey ./journey
+# Repo-root iAdore client — imported by journey/step_routes.py (`import bank_statement`).
+# Lives at the root, NOT inside a package, so it must be copied explicitly or the
+# bank-statement upload dies on prod with "No module named 'bank_statement'".
+COPY bank_statement.py ./
 
 # The built React UI, served by FastAPI (see underwriting/api.py).
 COPY --from=ui /ui/dist ./journey-ui/dist
