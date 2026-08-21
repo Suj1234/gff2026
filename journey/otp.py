@@ -13,6 +13,7 @@ whether the SMS actually goes out and whether the OTP is echoed as debug_otp.
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,12 @@ def _hash(otp: str, target: str) -> str:
 
 
 def generate_otp() -> str:
+    # OTP_FIXED_CODE (demo env only, e.g. "123456") — every OTP is this fixed code
+    # instead of random, so a demo run never needs a real SMS to be read. Everything
+    # else (mobile lookup, PAN, OCR, LLM calls) stays real; this flag touches OTP only.
+    fixed = os.getenv("OTP_FIXED_CODE", "").strip()
+    if fixed:
+        return fixed
     return f"{secrets.randbelow(1_000_000):06d}"
 
 

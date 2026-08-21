@@ -77,15 +77,18 @@ def send_otp(req: SendOtpRequest, db: Session = Depends(get_session)) -> dict:
     # MOBILE_PAN_MOCK_MODE=1 (journey testing/CI) must skip the REAL SMS send too, not just
     # the downstream Mobile->PAN prefill — otherwise "mock mode" still texts the applicant's
     # phone every time (found 2026-08-21: this exact gap sent 3 real OTPs during testing).
+    # OTP_FIXED_CODE (demo env) skips the SMS the same way — the applicant already knows
+    # the fixed code, so there's nothing useful to deliver.
+    otp_mocked = mobile_pan.mock_mode_enabled() or bool(os.getenv("OTP_FIXED_CODE", "").strip())
     t0 = time.time()
-    if mobile_pan.mock_mode_enabled():
-        result = msg91.SendResult(sent=False, error="MOBILE_PAN_MOCK_MODE=1 — real SMS skipped")
+    if otp_mocked:
+        result = msg91.SendResult(sent=False, error="OTP mocked — real SMS skipped")
     else:
         result = msg91.send_sms_otp(req.mobile, plaintext)
     latency_ms = int((time.time() - t0) * 1000)
     track_api_call(
         db, provider="msg91", endpoint="/api/v5/flow",
-        mode="mock" if mobile_pan.mock_mode_enabled() else ("real" if msg91.creds_present() else "mock"),
+        mode="mock" if otp_mocked else ("real" if msg91.creds_present() else "mock"),
         request_summary={"mobile": req.mobile, "purpose": req.purpose},
         response_summary={"sent": result.sent},
         ok=result.sent, http_status=result.http_status, latency_ms=latency_ms,

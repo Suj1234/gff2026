@@ -108,3 +108,24 @@ def test_no_real_sms_is_sent_in_mock_mode(monkeypatch):
     r = c.post("/api/auth/send-otp", json={"mobile": "9000000002", "insurer_slug": "acme"}).json()
     assert r["success"] is True  # would have raised if send_sms_otp were called
     assert r["debug_otp"]
+
+
+def test_otp_fixed_code_skips_real_sms_and_is_always_the_configured_code(monkeypatch):
+    """OTP_FIXED_CODE (demo env) is independent of MOBILE_PAN_MOCK_MODE — every OTP
+    becomes the fixed code and no real SMS goes out, without mocking mobile->PAN."""
+    from journey import auth_routes, msg91
+
+    def boom(*a, **kw):
+        raise AssertionError("send_sms_otp should never be called with OTP_FIXED_CODE set")
+    monkeypatch.setattr(auth_routes.msg91, "send_sms_otp", boom)
+    monkeypatch.setenv("OTP_FIXED_CODE", "123456")
+
+    c = TestClient(app)
+    r = c.post("/api/auth/send-otp", json={"mobile": "9000000003", "insurer_slug": "acme"}).json()
+    assert r["success"] is True
+    assert r["debug_otp"] == "123456"
+
+    v = c.post("/api/auth/verify-otp", json={
+        "mobile": "9000000003", "otp": "123456", "otp_ref_id": r["otp_ref_id"],
+        "insurer_slug": "acme"}).json()
+    assert v["success"] is True, v
