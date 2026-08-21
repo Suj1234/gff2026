@@ -476,23 +476,31 @@ class FinancialRequest(BaseModel):
 
 @router.post("/financial")
 def set_financial(req: FinancialRequest, request: Request, db: Session = Depends(get_session)) -> dict:
-    app = _require_app(request, req.app_id, db)
-    if app is None:
-        return {"success": False, "message": "unauthorized"}
+    # Locked (see the helpers-section comment on _app_lock): this route fires repeatedly
+    # on every income-field blur, often WHILE the bank-statement background task is
+    # mid read->mutate->write on the SAME bundle — an unlocked race here silently
+    # reverted a completed iAdore result back to "processing" (reproduced 2026-08-21,
+    # app GFF-99E1E8: bank_statement_analyzed fired twice, but a `financial_declared`
+    # landing in between clobbered account_aggregator back to null).
+    with _app_lock(req.app_id):
+        app = _require_app(request, req.app_id, db)
+        if app is None:
+            return {"success": False, "message": "unauthorized"}
 
-    def add(bundle):
-        fin = bundle.setdefault("application", {}).setdefault("financial", {})
-        if req.declared_annual_income is not None:
-            fin["declared_annual_income"] = req.declared_annual_income
-        if req.source_of_funds:
-            fin["source_of_funds"] = req.source_of_funds
-        if req.purpose_of_cover:
-            fin["purpose_of_cover"] = req.purpose_of_cover
-    _mutate_bundle(app, add)
-    db.add(app)
-    track_event(db, event_type="financial_declared", application_id=app.id, actor="customer",
-                detail={"income": req.declared_annual_income, "source": req.source_of_funds})
-    return {"success": True}
+        def add(bundle):
+            fin = bundle.setdefault("application", {}).setdefault("financial", {})
+            if req.declared_annual_income is not None:
+                fin["declared_annual_income"] = req.declared_annual_income
+            if req.source_of_funds:
+                fin["source_of_funds"] = req.source_of_funds
+            if req.purpose_of_cover:
+                fin["purpose_of_cover"] = req.purpose_of_cover
+        _mutate_bundle(app, add)
+        db.add(app)
+        track_event(db, event_type="financial_declared", application_id=app.id, actor="customer",
+                    detail={"income": req.declared_annual_income, "source": req.source_of_funds})
+        db.commit()
+        return {"success": True}
 
 
 def _analyze_bank_statement_bg(app_id: int, tmp_path: str) -> None:
@@ -505,14 +513,23 @@ def _analyze_bank_statement_bg(app_id: int, tmp_path: str) -> None:
     ProposalInput — `_journey` is stripped before parsing, journey/step_routes.py raw.pop):
     set "processing" before the call so a page refresh mid-analysis can tell "still working"
     apart from "never uploaded" (both look identical via signals.account_aggregator alone,
-    since that key only ever gets WRITTEN on success, never on start)."""
+    since that key only ever gets WRITTEN on success, never on start).
+
+    Both DB writes below are wrapped in `_app_lock(app_id)` (see the helpers-section
+    comment) — this task's own read->mutate->write on the bundle otherwise races the
+    `/financial` route's autosave-on-blur (fires on every income-field blur) or a second
+    concurrent upload, and the LAST writer wins, silently reverting a completed result
+    back to "processing"/dropping the income edit (reproduced 2026-08-21, app GFF-99E1E8:
+    two bank_statement_analyzed events fired, but account_aggregator ended up null and
+    the marker stuck on "processing" — a `financial_declared` write landed in between and
+    clobbered it)."""
     t0 = time.time()
     try:
         import bank_statement as iadore  # repo-root client (real 3-call flow)
         from underwriting.sources import bank_statement as adapter
         raw = iadore.analyze(tmp_path)
         aa = adapter.to_account_aggregator(raw)
-        with session_scope() as s:
+        with _app_lock(app_id), session_scope() as s:
             app = s.get(Application, app_id)
             if app is None:
                 return
@@ -532,7 +549,7 @@ def _analyze_bank_statement_bg(app_id: int, tmp_path: str) -> None:
             track_event(s, event_type="bank_statement_analyzed", application_id=app_id,
                         detail={"imputed_income": aa.get("imputed_annual_income")})
     except Exception as e:
-        with session_scope() as s:
+        with _app_lock(app_id), session_scope() as s:
             app = s.get(Application, app_id)
             if app is not None:
                 def mark_error(bundle):
@@ -567,30 +584,39 @@ async def upload_bank_statement(request: Request, background: BackgroundTasks,
     form = await request.form()
     app_id = int(form.get("app_id", 0))
     upload = form.get("file")
-    app = _require_app(request, app_id, db)
-    if app is None:
-        return {"success": False, "message": "unauthorized"}
-    if upload is None:
-        return {"success": False, "message": "no file"}
 
-    # Plain document-sharing consent (the applicant hands over their own statement PDF).
-    _record_consent(db, app, "bank_statement_upload", "DPDP_Act")
-
-    # Save the upload to a temp path for the iAdore client (it takes a file path). The bg task
-    # deletes it when done — NOT here, or it'd vanish before the analysis reads it.
+    # Save the upload to a temp path for the iAdore client (it takes a file path) BEFORE
+    # taking the lock — file I/O has no business holding _app_lock. The bg task deletes
+    # the temp file when done, not here, or it'd vanish before the analysis reads it.
     import tempfile
     from pathlib import Path
-    suffix = Path(getattr(upload, "filename", "stmt.pdf")).suffix or ".pdf"
-    data = await upload.read()
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.write(data)
-    tmp.close()
+    if upload is not None:
+        suffix = Path(getattr(upload, "filename", "stmt.pdf")).suffix or ".pdf"
+        data = await upload.read()
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.write(data)
+        tmp.close()
 
-    def mark_processing(bundle):
-        bundle.setdefault("_journey", {})["bank_statement_upload"] = {
-            "status": "processing", "filename": getattr(upload, "filename", None)}
-    _mutate_bundle(app, mark_processing)
-    db.add(app)
+    # Locked (see the helpers-section comment on _app_lock): this write races the
+    # background task's own read->mutate->write on the same bundle (previous upload
+    # still finishing) and the /financial autosave — see _analyze_bank_statement_bg's
+    # docstring for the reproduced clobber.
+    with _app_lock(app_id):
+        app = _require_app(request, app_id, db)
+        if app is None:
+            return {"success": False, "message": "unauthorized"}
+        if upload is None:
+            return {"success": False, "message": "no file"}
+
+        # Plain document-sharing consent (the applicant hands over their own statement PDF).
+        _record_consent(db, app, "bank_statement_upload", "DPDP_Act")
+
+        def mark_processing(bundle):
+            bundle.setdefault("_journey", {})["bank_statement_upload"] = {
+                "status": "processing", "filename": getattr(upload, "filename", None)}
+        _mutate_bundle(app, mark_processing)
+        db.add(app)
+        db.commit()
 
     background.add_task(_analyze_bank_statement_bg, app.id, tmp.name)
     return {"success": True, "status": "processing",
