@@ -111,6 +111,13 @@ class HealthDeclaration(BaseModel):
     past_medical_history: Optional[str] = None
     ongoing_medication: Optional[str] = None
     family_history: list[str] = Field(default_factory=list)
+    # HEALTH_AGENT_PLAN.md §5: structured per-condition detail from the conversational
+    # health-triage agent. One dict per condition thread that ran; shape matches
+    # SummarizeConditionThread's output (journey/health_agent/signatures.py) — onset,
+    # current_status, treatment, severity_notes, free_text_summary, ended_reason,
+    # source="health_agent". Some fields legitimately null when the applicant didn't
+    # cover them and the turn cap was hit (ended_reason="turn_cap" signals that case).
+    condition_detail: list[dict] = Field(default_factory=list)
 
 
 class Consent(BaseModel):
@@ -336,6 +343,32 @@ class Aps(_Src):
     prescriptions: list[str] = Field(default_factory=list)
 
 
+class PrescriptionOcr(_Src):
+    """OCR'd prescription/MER upload (HEALTH_AGENT_PLAN.md §2), via Gemini vision
+    (prescription_ocr.py at repo root -> underwriting/sources/prescription_ocr.py
+    adapter). Mirrors Aps: free text is RAW, LLM condition-extraction happens
+    downstream (the health-agent triage step), never inside the adapter. Facts only —
+    no diagnosis, no verdict (§1.8)."""
+
+    raw_text: list[str] = Field(default_factory=list)      # OCR'd text, one entry per page/doc
+    drug_names: list[str] = Field(default_factory=list)     # OCR-detected drug names, unvalidated
+    icd_codes: list[str] = Field(default_factory=list)      # only if OCR vendor returns coded dx
+    diagnosis_notes: list[str] = Field(default_factory=list)  # free-text clinical notes, RAW
+
+
+class HealthAgentTranscript(_Src):
+    """Raw Q&A transcript per condition thread run by the conversational health-triage
+    agent (HEALTH_AGENT_PLAN.md §4-§5). Audit/explainability only — never read by a rule
+    directly; HealthDeclaration.condition_detail is the structured fact rules/scoring
+    may use. `threads` carries `unprompted_conditions` too (§4.2) so nothing an
+    applicant volunteered is ever absent from the audit trail, even when the 2-new-
+    bucket cap meant it didn't get its own dedicated follow-up thread."""
+
+    threads: list[dict] = Field(default_factory=list)
+    # [{bucket, trigger_fact, transcript: [{q,a}], turns_used, ended_reason,
+    #   unprompted_conditions: [...]}]
+
+
 class EmailIntel(_Src):
     # FACTS from the email-intelligence vendor. The vendor's own 1-100 fraud score
     # (higher = SAFER) is INVERTED by the adapter to `fraud_risk_score` in [0,1]
@@ -382,6 +415,8 @@ class Signals(BaseModel):
     iib: Iib = Field(default_factory=Iib)
     email_intel: EmailIntel = Field(default_factory=EmailIntel)
     aps: Aps = Field(default_factory=Aps)  # LIFE: attending physician statement (R-010 free-text)
+    prescription_ocr: PrescriptionOcr = Field(default_factory=PrescriptionOcr)  # health-agent OCR input
+    health_agent_transcript: HealthAgentTranscript = Field(default_factory=HealthAgentTranscript)
 
 
 class ProposalInput(BaseModel):

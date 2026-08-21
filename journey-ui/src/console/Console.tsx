@@ -26,7 +26,7 @@ const STEP_META: { title: string; desc: string; subSteps: string[]; cta: string 
   { title: "Identity & KYC", desc: "Confirm the applicant's identity, add an email, and verify Aadhaar.", subSteps: [], cta: "Continue to Product" },
   { title: "Product & Cover", desc: "Choose the plan, cover amount, policy term, and any riders.", subSteps: [], cta: "Continue to Financial" },
   { title: "Financial", desc: "Declared income and source of funds.", subSteps: [], cta: "Continue to Health" },
-  { title: "Health", desc: "Health declaration, lifestyle, and a live face scan.", subSteps: ["Health", "Vitals & lifestyle", "Face scan & ABHA"], cta: "Continue to Decision" },
+  { title: "Health", desc: "Health declaration, lifestyle, and a live face scan.", subSteps: ["Face scan & ABHA", "Follow-up questions", "Health", "Vitals & lifestyle"], cta: "Continue to Decision" },
   { title: "Decision", desc: "The underwriting agent's verdict and full report.", subSteps: [], cta: "Continue to Nominee" },
   { title: "Nominee", desc: "Who receives the benefit.", subSteps: ["Nominee"], cta: "Continue to Payment" },
   { title: "Payment", desc: "Complete the premium payment to issue the policy.", subSteps: ["Payment"], cta: "Issue policy" },
@@ -104,6 +104,10 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
   // walks these before advancing the whole step. maxHealthSub = furthest visited.
   // (healthSub itself is declared above, near useRail, so the rail can read it.)
   const [maxHealthSub, setMaxHealthSub] = useState(0)
+  // The conversational deep-dive sub-step (HEALTH_AGENT_PLAN.md §7) gates Continue until
+  // the agent's own turn-cap/completion decides it's done, or the applicant explicitly
+  // skips — set true immediately if the sub-step isn't even reached (nothing to gate on).
+  const [healthChatDone, setHealthChatDone] = useState(false)
   // Step 6 nominee state (lifted; survives navigation). Multiple nominees + share split.
   const [nominees, setNominees] = useState<Nominee[]>([emptyNominee()])
   const [stepMsg, setStepMsg] = useState("")  // inline save error (currently step 6)
@@ -127,6 +131,14 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
     // overwrites it normally. Only when there IS saved health data.
     const hd = snap.health_declaration
     if (hd && Object.keys(hd).length) setHealth(healthFromPayload(hd as any))
+    // Revisit: if every flagged thread already finished (or nothing was ever flagged),
+    // Continue on "healthchat" shouldn't re-block — HealthChatPanel itself also detects
+    // this on mount, but that happens a render later, so set it here too to avoid a
+    // one-frame flash of a disabled Continue button.
+    const ha = snap.health_agent
+    if (ha && (!ha.flagged?.length || ha.flagged.every((f) => ha.threads?.[f.bucket]?.done))) {
+      setHealthChatDone(true)
+    }
     prefilled.current = true
   }, [snap])
 
@@ -154,7 +166,11 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
 
   // Step 1 is complete only once identity is resolved (a PAN exists — from mobile prefill or
   // the PAN gate). Until then the PAN-entry view is showing, so Continue must be disabled.
-  const stepComplete = step !== 1 || !!snap.seeded || !!snap.signals.pan_verify?.pan
+  // Step 4's "healthchat" sub-step similarly gates Continue until the deep-dive agent
+  // itself says it's done (or the applicant skips) — HEALTH_AGENT_PLAN.md §7.
+  const onHealthChatSub = step === 4 && healthSubs[Math.min(healthSub, healthSubs.length - 1)]?.key === "healthchat"
+  const stepComplete = (step !== 1 || !!snap.seeded || !!snap.signals.pan_verify?.pan)
+    && (!onHealthChatSub || healthChatDone)
 
   // Per-step save: POST to the step's endpoint, return ok. Steps not yet built just pass through.
   async function saveStep(): Promise<boolean> {
@@ -300,7 +316,8 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
                 {step === 1 && <IdentityCenter snap={snap} appId={appId} onPrefilled={reload} email={email} onEmailChange={setEmail} />}
                 {step === 2 && <ProductStep appId={appId} snap={snap} value={product} onChange={setProduct} onPremium={setPremium} />}
                 {step === 3 && <FinancialStep appId={appId} snap={snap} value={financial} onChange={setFinancial} />}
-                {step === 4 && <HealthStep appId={appId} snap={snap} value={health} onChange={setHealth} subStep={healthSub} />}
+                {step === 4 && <HealthStep appId={appId} snap={snap} value={health} onChange={setHealth} subStep={healthSub}
+                  onHealthChatDone={() => setHealthChatDone(true)} />}
                 {step === 5 && <DecisionStep appId={appId} />}
                 {step === 6 && <NomineeStep value={nominees} onChange={(n) => { setNominees(n); setStepMsg("") }} />}
                 {step === 7 && <PaymentStep appId={appId} snap={snap} premium={premium} />}

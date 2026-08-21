@@ -2,61 +2,47 @@ import { useRef, useState } from "react"
 import type { AppSnapshot } from "./useJourney"
 import {
   Check, Spinner, SealCheck, Warning, QrCode, PaperPlaneTilt,
-  Pulse, Heartbeat, Wind, Drop, FirstAid, X, Plus,
+  Pulse, Heartbeat, Wind, Drop, FirstAid, X, Plus, UploadSimple,
 } from "@phosphor-icons/react"
 import { Modal } from "./Modal"
+import { HealthChatPanel } from "./HealthChatPanel"
 
-// STEP 4 — Health Declaration (TERM LIFE, single life). Modelled on the REAL Indian
-// Declaration of Good Health (LIC Form 300 Rev-2024 Section III; ICICI Pru / HDFC term
-// mirror it). Real forms use the SCREENER QUESTIONS as the disclosure — you answer Yes/No,
-// and only a Yes reveals its own specifics inline. There is NO scary body-system grid up
-// front. So: six Yes/No screeners (all default No); the medical-conditions screener reveals
-// a condition picker inline on Yes; the others reveal a short detail line. Then always:
-// height/weight (->BMI), tobacco/alcohol/drugs (LIC Section II), meds + family history.
-// Then a live NuralX face scan and an ABHA consent+fetch.
+// STEP 4 — Health Declaration (TERM LIFE, single life). Originally modelled on the real
+// Indian Declaration of Good Health (LIC Form 300 Rev-2024 Section III); simplified
+// 2026-08-21 (explicit request) down to 3 condition Yes/No screeners — hypertension,
+// kidney, any other ailment — each revealing a short detail line on Yes. A screener whose
+// matching condition was already covered in the AI follow-up chat (Step 4's
+// "healthchat" sub-step) is skipped here rather than re-asked. Then always: height/weight
+// (->BMI), tobacco/alcohol/drugs (LIC Section II), family history. Then a live NuralX
+// face scan and an ABHA consent+fetch.
 //
 // Persists via /api/journey/health on Continue (Console.saveStep). Face scan + ABHA run
 // on their own buttons (they mutate the bundle server-side and light the rail immediately).
 
-// The medical-conditions screener (LIC 300 §e) is the one that reveals a condition picker.
-// The named conditions ARE the ones LIC 300 §e enumerates, flattened to a plain list (no
-// body-system grouping — that grouping is what read as confusing). Order = most common first.
-const MEDICAL_CONDITIONS = [
-  "Diabetes", "High blood pressure", "Heart disease", "High cholesterol",
-  "Asthma / respiratory", "Thyroid disorder", "Cancer or tumour", "Stroke / TIA",
-  "Kidney disease", "Liver disease / hepatitis", "Tuberculosis",
-  "Epilepsy / neurological", "Depression / anxiety", "Other",
-]
-
-// The six screeners. `reveal` decides what a Yes opens: "conditions" = the picker above;
-// "detail" = a single detail line. Wording matches the real form's questions.
-const SCREENERS: { id: string; q: string; reveal: "conditions" | "detail"; detailLabel?: string }[] = [
-  { id: "major_illness", reveal: "conditions",
-    q: "Have you ever suffered from, been diagnosed with, or been treated for any medical condition?" },
-  { id: "practitioner", reveal: "detail", detailLabel: "What for, and when?",
-    q: "In the last 5 years, have you consulted a doctor for any ailment needing treatment for more than a week?" },
-  { id: "hospitalised", reveal: "detail", detailLabel: "What for, and when?",
-    q: "Have you ever been admitted to a hospital or nursing home for treatment, an accident, an injury, or an operation?" },
-  { id: "medication", reveal: "detail", detailLabel: "Which medication, and for what?",
-    q: "Are you currently taking any prescribed medication regularly?" },
-  { id: "surgery", reveal: "detail", detailLabel: "What surgery, and when?",
-    q: "Are you currently advised or planning to undergo any surgery, or awaiting any test results?" },
-  { id: "prior_decline", reveal: "detail", detailLabel: "Which insurer, and the outcome?",
-    q: "Has any life or health insurance proposal on you ever been declined, deferred, postponed, or accepted at a higher premium?" },
+// Simplified to 3 questions (2026-08-21, explicit request): the original 6-screener LIC
+// form is replaced entirely — hospitalization/current-meds/planned-surgery/prior-decline/
+// recent-doctor-visit are dropped, keeping only condition questions. `aiBucket` links a
+// screener to the matching health-agent CONDITION_BUCKETS key (journey/health_agent/
+// config.py) — if the AI chat already flagged+covered that bucket, this screener is
+// SKIPPED rather than asked again (see `visibleScreeners` in HealthStep below).
+// `other_ailment` has no aiBucket: the agent's fixed catalog doesn't have an open-ended
+// "anything else" bucket, so it's always asked.
+const SCREENERS: { id: string; q: string; reveal: "detail"; detailLabel?: string; aiBucket?: string }[] = [
+  { id: "hypertension", reveal: "detail", detailLabel: "Since when, and is it controlled?",
+    q: "Have you ever been diagnosed with high blood pressure / hypertension?", aiBucket: "hypertension" },
+  { id: "kidney", reveal: "detail", detailLabel: "Since when, and current treatment?",
+    q: "Have you ever been diagnosed with a kidney condition?", aiBucket: "renal_hepatic" },
+  { id: "other_ailment", reveal: "detail", detailLabel: "Please describe",
+    q: "Any other medical condition not already covered in this application?" },
 ]
 
 // first-degree relatives + the hereditary conditions the form calls out (LIC 300 §III)
 const FAMILY_MEMBERS = ["Father", "Mother", "Brother", "Sister"]
 const FAMILY_CONDITIONS = ["Heart disease", "Stroke", "High blood pressure", "Diabetes", "Cancer", "Kidney disease"]
 
-// per-condition light deep-dive. Backend stores conditions[] as strings, so each ticked
-// condition round-trips as a single labelled string ("Diabetes — since 2019, controlled").
-type ConditionDetail = { year: string; controlled: "" | "yes" | "no"; note: string }
-
 export type HealthState = {
   screeners: Record<string, boolean>            // all default false (No)
   screenerDetail: Record<string, string>        // free text for a "detail"-reveal screener
-  conditions: Record<string, ConditionDetail>   // keyed by condition name, only ticked ones present
   height_cm: number | ""
   weight_kg: number | ""
   tobacco: boolean; tobacco_qty: string
@@ -66,39 +52,42 @@ export type HealthState = {
 }
 
 export const emptyHealth: HealthState = {
-  screeners: {}, screenerDetail: {}, conditions: {}, height_cm: "", weight_kg: "",
+  screeners: {}, screenerDetail: {}, height_cm: "", weight_kg: "",
   tobacco: false, tobacco_qty: "", alcohol: false, alcohol_qty: "",
   drugs: false, drugs_qty: "", family_history: [],
 }
 
-// Flatten HealthState -> the /api/journey/health body shape. conditions + screener details
-// + habit quantities all fold into the engine's string/list fields.
+// Flatten HealthState -> the /api/journey/health body shape. The 3 simplified screeners
+// (hypertension/kidney/other_ailment) ARE conditions, so a Yes+detail folds straight into
+// the `conditions` list — same shape "Name — detail text" the engine already expects.
+const SCREENER_CONDITION_LABEL: Record<string, string> = {
+  hypertension: "High blood pressure", kidney: "Kidney condition", other_ailment: "Other",
+}
 export function healthPayload(h: HealthState) {
-  const conditions = Object.entries(h.conditions).map(([name, d]) => {
-    const bits = [d.year && `since ${d.year}`, d.controlled && (d.controlled === "yes" ? "controlled" : "not controlled"), d.note].filter(Boolean)
-    return bits.length ? `${name} — ${bits.join(", ")}` : name
-  })
-  // detail-reveal screeners that are Yes with text become past-history notes
-  const notes = SCREENERS.filter((s) => s.reveal === "detail" && h.screeners[s.id] && h.screenerDetail[s.id])
-    .map((s) => `${s.detailLabel?.replace(/\?$/, "") ?? s.id}: ${h.screenerDetail[s.id]}`)
+  const screenerConditions = SCREENERS
+    .filter((s) => h.screeners[s.id])
+    .map((s) => {
+      const detail = h.screenerDetail[s.id]
+      const label = SCREENER_CONDITION_LABEL[s.id] ?? s.id
+      return detail ? `${label} — ${detail}` : label
+    })
   const qty = (on: boolean, q: string, label: string) => (on && q ? `${label}: ${q}` : "")
   const habits = [qty(h.tobacco, h.tobacco_qty, "Tobacco"), qty(h.alcohol, h.alcohol_qty, "Alcohol"), qty(h.drugs, h.drugs_qty, "Drugs")].filter(Boolean).join("; ")
-  const past = [...notes, habits].filter(Boolean).join(" · ")
-  const ongoing = h.screeners["medication"] ? (h.screenerDetail["medication"] || "yes, details on file") : ""
   return {
-    conditions,
+    conditions: screenerConditions,
     height_cm: h.height_cm || null,
     weight_kg: h.weight_kg || null,
     tobacco: h.tobacco, alcohol: h.alcohol, drugs: h.drugs,
-    ongoing_medication: ongoing || null,
-    past_medical_history: past || null,
+    ongoing_medication: null,
+    past_medical_history: habits || null,
     family_history: h.family_history,
   }
 }
 
 // Inverse of healthPayload: rebuild HealthState from the saved /api/journey/app payload so
-// a revisit prefills what the applicant already declared (form ⇄ rail stay in sync). Best-effort
-// — parses the "Name — since YYYY, controlled, note" condition strings back into the picker.
+// a revisit prefills what the applicant already declared (form ⇄ rail stay in sync).
+// Best-effort — matches a "Label — detail" condition string back to its screener id via
+// SCREENER_CONDITION_LABEL.
 type HealthPayload = {
   conditions?: string[]; height_cm?: number | null; weight_kg?: number | null
   tobacco?: boolean; alcohol?: boolean; drugs?: boolean
@@ -106,23 +95,19 @@ type HealthPayload = {
   family_history?: string[]
 }
 export function healthFromPayload(p: HealthPayload): HealthState {
-  const conditions: Record<string, ConditionDetail> = {}
+  const screeners: Record<string, boolean> = {}
+  const screenerDetail: Record<string, string> = {}
+  const labelToId = Object.fromEntries(Object.entries(SCREENER_CONDITION_LABEL).map(([id, label]) => [label.toLowerCase(), id]))
   for (const raw of p.conditions || []) {
     const [namePart, detailPart = ""] = raw.split(/\s+—\s+/, 2)
-    // Match the ticked chip to a known condition label (else drop under "Other").
-    const name = MEDICAL_CONDITIONS.find((c) => c.toLowerCase() === namePart.trim().toLowerCase()) || "Other"
-    const year = (detailPart.match(/since\s+(\d{4})/) || [])[1] || ""
-    const controlled: ConditionDetail["controlled"] =
-      /\bnot controlled\b/.test(detailPart) ? "no" : /\bcontrolled\b/.test(detailPart) ? "yes" : ""
-    const note = detailPart.replace(/since\s+\d{4},?\s*/, "").replace(/\b(not )?controlled\b,?\s*/, "").trim()
-    conditions[name] = { year, controlled, note }
+    const id = labelToId[namePart.trim().toLowerCase()]
+    if (!id) continue  // a condition string from before this simplification — drop silently
+    screeners[id] = true
+    if (detailPart) screenerDetail[id] = detailPart
   }
-  const screeners: Record<string, boolean> = {}
-  if (Object.keys(conditions).length) screeners["major_illness"] = true
-  if (p.ongoing_medication) screeners["medication"] = true
   return {
     ...emptyHealth,
-    conditions, screeners,
+    screeners, screenerDetail,
     height_cm: p.height_cm ?? "",
     weight_kg: p.weight_kg ?? "",
     tobacco: !!p.tobacco, alcohol: !!p.alcohol, drugs: !!p.drugs,
@@ -141,65 +126,95 @@ const bmiBand = (b: number): { label: string; tone: "ok" | "warn" | "bad" } =>
   : b < 30 ? { label: "Overweight", tone: "warn" }
   : { label: "Obese", tone: "bad" }
 
-// Three sub-steps. Screeners + conditions are ONE flow now ("Health") — a Yes reveals its
-// specifics inline, so there is no separate conditions page (your feedback: they're linked).
+// Four sub-steps, REORDERED per HEALTH_AGENT_PLAN.md §7: intake (face scan/ABHA/
+// prescription) must come FIRST because the conversational deep-dive's triage step
+// needs those facts before it can run anything — the fixed mandatory screeners +
+// vitals/lifestyle don't depend on triage, so they move to the end.
+//   OLD: Health screeners -> Vitals & lifestyle -> Face scan & ABHA
+//   NEW: Face scan & ABHA -> Conversational deep-dive (NEW) -> Health -> Vitals & lifestyle
 export const HEALTH_SUBSTEPS = [
+  { key: "facescan", label: "Face scan & ABHA" },
+  { key: "healthchat", label: "Follow-up questions" },
   { key: "health", label: "Health" },
   { key: "vitals", label: "Vitals & lifestyle" },
-  { key: "facescan", label: "Face scan & ABHA" },
 ] as const
 
-// The sub-steps Console paginates over. Fixed three — nothing auto-skips anymore.
+// The sub-steps Console paginates over. Fixed four — nothing auto-skips anymore.
 export function visibleHealthSubSteps(_h: HealthState): { key: string; label: string }[] {
   return HEALTH_SUBSTEPS.map(({ key, label }) => ({ key, label }))
 }
 
 export function HealthStep({
-  appId, snap, value, onChange, subStep = 0,
+  appId, snap, value, onChange, subStep = 0, onHealthChatDone,
 }: {
   appId: number | null; snap: AppSnapshot
   value: HealthState; onChange: (s: HealthState) => void
   subStep?: number   // which visible sub-step to render (Console drives it via the footer)
+  onHealthChatDone?: () => void   // gates Continue on the "healthchat" sub-step (§7)
 }) {
   const set = (patch: Partial<HealthState>) => onChange({ ...value, ...patch })
-  const anyYes = SCREENERS.some((s) => value.screeners[s.id])
   const bmi = bmiOf(value.height_cm, value.weight_kg)
 
   const visible = visibleHealthSubSteps(value)
   const active = visible[Math.min(subStep, visible.length - 1)]?.key ?? "health"
 
+  // Screener skip: a bucket the AI chat already flagged+ran a thread on doesn't need
+  // asking again here — the same clinical fact, asked twice, reads as broken not
+  // thorough. `flagged` = triage said this condition has evidence; a THREAD existing
+  // for it (regardless of `done`) means the applicant already answered questions about
+  // it in the chat. Screeners with no `aiBucket` (other_ailment) are never skippable —
+  // there's no matching bucket in the AI's fixed catalog to check against.
+  const aiCoveredBuckets = new Set(
+    (snap.health_agent?.flagged ?? [])
+      .map((f) => f.bucket)
+      .filter((b) => snap.health_agent?.threads?.[b])
+  )
+  const visibleScreeners = SCREENERS.filter((s) => !s.aiBucket || !aiCoveredBuckets.has(s.aiBucket))
+  const anyYes = visibleScreeners.some((s) => value.screeners[s.id])
+
   const setScreener = (id: string, v: boolean) => {
     const patch: Partial<HealthState> = { screeners: { ...value.screeners, [id]: v } }
-    // Answering No must retract what a Yes revealed — else the conditions/detail persist and
-    // keep scoring even though the screener now reads No (the form ⇄ score mismatch).
-    if (!v) {
-      if (id === "major_illness") patch.conditions = {}
-      patch.screenerDetail = { ...value.screenerDetail, [id]: "" }
-    }
+    // Answering No must retract what a Yes revealed — else the detail text persists and
+    // keeps scoring even though the screener now reads No (the form ⇄ score mismatch).
+    if (!v) patch.screenerDetail = { ...value.screenerDetail, [id]: "" }
     set(patch)
   }
   const setDetail = (id: string, text: string) =>
     set({ screenerDetail: { ...value.screenerDetail, [id]: text } })
-  const toggleCondition = (name: string) => {
-    const next = { ...value.conditions }
-    if (next[name]) delete next[name]
-    else next[name] = { year: "", controlled: "", note: "" }
-    set({ conditions: next })
-  }
 
   return (
     <div className="space-y-8">
-      {/* ── HEALTH ── the six screeners; a Yes reveals its own specifics inline ── */}
+      {/* ── FACE SCAN + ABHA ── the external scans, FIRST (HEALTH_AGENT_PLAN.md §7):
+          the conversational deep-dive's triage needs these facts before it can run. ── */}
+      {active === "facescan" && (
+        <div className="space-y-8 animate-[fade-up_.2s_ease]">
+          <FaceScan appId={appId} snap={snap} />
+          <AbhaFetch appId={appId} snap={snap} />
+          <PrescriptionUpload appId={appId} snap={snap} />
+        </div>
+      )}
+
+      {/* ── CONVERSATIONAL DEEP-DIVE ── adaptive follow-up, triaged from face-scan/ABHA/
+          prescription facts (HEALTH_AGENT_PLAN.md §3-§7). Runs once, right after intake. ── */}
+      {active === "healthchat" && (
+        <HealthChatPanel appId={appId} snap={snap} onAllDone={() => onHealthChatDone?.()} />
+      )}
+
+      {/* ── HEALTH ── 3 condition screeners; a Yes reveals its own detail line inline.
+          A screener already covered in the AI follow-up chat is skipped, not re-asked. ── */}
       {active === "health" && (
         <section className="animate-[fade-up_.2s_ease]">
           <RegionHead title="Health declaration" hint="Answer for the person being insured. Everything defaults to No — a Yes asks only for the details that matter." />
+          {visibleScreeners.length < SCREENERS.length && (
+            <p className="mb-2.5 text-[12px] text-muted-foreground">
+              {SCREENERS.length - visibleScreeners.length === 1 ? "One question" : `${SCREENERS.length - visibleScreeners.length} questions`} already covered in the follow-up chat above — not asked again here.
+            </p>
+          )}
           <div className="space-y-2.5">
-            {SCREENERS.map((s) => (
+            {visibleScreeners.map((s) => (
               <ScreenerCard key={s.id} screener={s} yes={!!value.screeners[s.id]}
                 onYesNo={(v) => setScreener(s.id, v)}
-                detail={value.screenerDetail[s.id] || ""} onDetail={(t) => setDetail(s.id, t)}
-                conditions={value.conditions} onToggleCondition={toggleCondition}
-                onConditionDetail={(name, d) => set({ conditions: { ...value.conditions, [name]: d } })} />
+                detail={value.screenerDetail[s.id] || ""} onDetail={(t) => setDetail(s.id, t)} />
             ))}
           </div>
           {!anyYes && (
@@ -253,31 +268,19 @@ export function HealthStep({
           </section>
         </div>
       )}
-
-      {/* ── FACE SCAN + ABHA ── the external scans, one page ── */}
-      {active === "facescan" && (
-        <div className="space-y-8 animate-[fade-up_.2s_ease]">
-          <FaceScan appId={appId} snap={snap} />
-          <AbhaFetch appId={appId} snap={snap} declaredClean={!anyYes} />
-        </div>
-      )}
     </div>
   )
 }
 
 // ─────────────────────────── screener card (inline reveal) ───────────────────────────
 
-// One screener: the Yes/No question, and — on Yes — its own specifics inline. The
-// medical-conditions screener reveals the condition picker; the rest reveal a detail line.
+// One screener: the Yes/No question, and — on Yes — a single detail line inline.
 function ScreenerCard({
-  screener, yes, onYesNo, detail, onDetail, conditions, onToggleCondition, onConditionDetail,
+  screener, yes, onYesNo, detail, onDetail,
 }: {
-  screener: { id: string; q: string; reveal: "conditions" | "detail"; detailLabel?: string }
+  screener: { id: string; q: string; reveal: "detail"; detailLabel?: string }
   yes: boolean; onYesNo: (v: boolean) => void
   detail: string; onDetail: (t: string) => void
-  conditions: Record<string, ConditionDetail>
-  onToggleCondition: (name: string) => void
-  onConditionDetail: (name: string, d: ConditionDetail) => void
 }) {
   return (
     <div className={`rounded-xl border transition-colors ${yes ? "border-primary bg-primary/[0.03]" : "border-border bg-white"}`}>
@@ -286,66 +289,13 @@ function ScreenerCard({
         <YesNoToggle value={yes} onChange={onYesNo} />
       </div>
 
-      {yes && screener.reveal === "detail" && (
+      {yes && (
         <div className="px-4 pb-4 animate-[fade-up_.15s_ease]">
           <input autoFocus placeholder={screener.detailLabel || "Please give details"}
             value={detail} onChange={(e) => onDetail(e.target.value)}
             className="w-full px-3 h-10 rounded-lg border border-input text-[13px] outline-none bg-white focus:border-ring focus:ring-[3px] focus:ring-ring/30" />
         </div>
       )}
-
-      {yes && screener.reveal === "conditions" && (
-        <div className="px-4 pb-4 space-y-3 animate-[fade-up_.15s_ease]">
-          <div className="text-[12px] font-semibold text-muted-foreground">Which condition(s)? Tick each that applies.</div>
-          <div className="flex flex-wrap gap-2">
-            {MEDICAL_CONDITIONS.map((name) => (
-              <button key={name} type="button" onClick={() => onToggleCondition(name)}
-                className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold transition-colors ${
-                  conditions[name] ? "border-primary bg-primary/[0.08] text-primary" : "border-border bg-white text-foreground hover:border-muted-foreground/30"}`}>
-                {conditions[name] && <Check weight="bold" className="size-3" />}{name}
-              </button>
-            ))}
-          </div>
-          {/* per-ticked-condition detail rows */}
-          {Object.keys(conditions).length > 0 && (
-            <div className="space-y-2 pt-1">
-              {MEDICAL_CONDITIONS.filter((n) => conditions[n]).map((name) => (
-                <ConditionDetailRow key={name} name={name} detail={conditions[name]}
-                  onDetail={(d) => onConditionDetail(name, d)} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ConditionDetailRow({
-  name, detail, onDetail,
-}: { name: string; detail: ConditionDetail; onDetail: (d: ConditionDetail) => void }) {
-  return (
-    <div className="rounded-lg border border-primary/30 bg-white p-2.5 flex flex-wrap items-center gap-2">
-      <span className="text-[12.5px] font-semibold min-w-[92px]">{name}</span>
-      <div className="flex items-stretch rounded-lg border border-input overflow-hidden bg-white focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/30">
-        <span className="grid place-items-center px-2 text-[11px] text-muted-foreground bg-muted border-r">Since</span>
-        <input inputMode="numeric" maxLength={4} placeholder="Year" value={detail.year}
-          onChange={(e) => onDetail({ ...detail, year: e.target.value.replace(/[^\d]/g, "").slice(0, 4) })}
-          className="w-16 px-2 h-8 text-[13px] outline-none bg-white tabular-nums" />
-      </div>
-      <div className="flex items-center gap-1">
-        {(["yes", "no"] as const).map((c) => (
-          <button key={c} type="button"
-            onClick={() => onDetail({ ...detail, controlled: detail.controlled === c ? "" : c })}
-            className={`h-8 px-2.5 rounded-lg border text-[12px] font-semibold transition-colors ${
-              detail.controlled === c ? "border-primary bg-primary/[0.08] text-primary" : "border-border bg-white hover:border-muted-foreground/30"}`}>
-            {c === "yes" ? "Controlled" : "Not controlled"}
-          </button>
-        ))}
-      </div>
-      <input placeholder="Notes (optional)" value={detail.note}
-        onChange={(e) => onDetail({ ...detail, note: e.target.value })}
-        className="flex-1 min-w-[120px] px-3 h-8 rounded-lg border border-input text-[13px] outline-none bg-white focus:border-ring focus:ring-[3px] focus:ring-ring/30" />
     </div>
   )
 }
@@ -868,7 +818,7 @@ const fmtAbha = (s: string) => {
   return [d.slice(0, 2), d.slice(2, 6), d.slice(6, 10), d.slice(10, 14)].filter(Boolean).join("-")
 }
 
-function AbhaFetch({ appId, snap, declaredClean }: { appId: number | null; snap: AppSnapshot; declaredClean: boolean }) {
+function AbhaFetch({ appId, snap }: { appId: number | null; snap: AppSnapshot }) {
   const existing = snap.signals.abha_health_records
   const [done, setDone] = useState(existing?.status === "available")
   const [count, setCount] = useState<number>(existing?.diagnoses?.length ?? 0)
@@ -928,7 +878,7 @@ function AbhaFetch({ appId, snap, declaredClean }: { appId: number | null; snap:
               <div className="text-[13.5px] font-semibold">ABHA records fetched</div>
               <div className="text-[12px] text-muted-foreground">
                 {count > 0
-                  ? `${count} record${count > 1 ? "s" : ""} returned. The agent cross-checks these against the declaration${declaredClean ? " (declared clean)" : ""}.`
+                  ? `${count} record${count > 1 ? "s" : ""} returned. The agent cross-checks these against your declaration later in this step.`
                   : "No records on file for this ABHA."}
               </div>
             </div>
@@ -1046,6 +996,128 @@ function AbhaFetch({ appId, snap, declaredClean }: { appId: number | null; snap:
           </div>
         )}
       </Modal>
+    </section>
+  )
+}
+
+// ─────────────────────────── prescription upload (optional, Gemini OCR) ───────────────────────────
+// Optional third input (HEALTH_AGENT_PLAN.md §2.1) — a photo/PDF of a prescription or MER,
+// read via Gemini vision (POST /api/journey/prescription). Purely additive to triage; skip
+// leaves signals.prescription_ocr absent and the agent reasons around it.
+
+// One uploaded file's own result, tracked client-side so each document stays visible and
+// attributable — the server-side record (signals.prescription_ocr) MERGES all uploads
+// together for triage, which is correct for the agent but loses "which file said what"
+// for the applicant/underwriter reviewing this screen.
+type DocResult = { name: string; status: "reading" | "done" | "error"; drugs: string[]; note?: string }
+
+function PrescriptionUpload({ appId, snap }: { appId: number | null; snap: AppSnapshot }) {
+  const existing = snap.signals.prescription_ocr
+  const [docs, setDocs] = useState<DocResult[]>(
+    existing?.status === "available" && existing.drug_names?.length
+      ? [{ name: "Previously uploaded", status: "done", drugs: existing.drug_names }] : [])
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Poll for ONE upload to land, diffing against the drug list already known before this
+  // upload started — so a merged record still tells us what THIS file specifically added.
+  async function pollForNewDrugs(priorDrugs: string[]): Promise<{ drugs: string[]; note?: string }> {
+    if (appId == null) return { drugs: [] }
+    for (let i = 0; i < 30; i++) {           // ~60s max wait per file, matches OCR's own timeout
+      await new Promise((r) => setTimeout(r, 2000))
+      try {
+        const r = await fetch(`/api/journey/app/${appId}`)
+        const d = (await r.json()) as AppSnapshot
+        const p = d?.signals?.prescription_ocr
+        if (p?.status === "available" || p?.status === "unavailable") {
+          if (p.status === "unavailable") return { drugs: [], note: "Couldn't read this file." }
+          const all = p.drug_names ?? []
+          // Only what THIS upload newly contributed — a doc that repeats an already-known
+          // drug (e.g. a refill) legitimately adds nothing new; don't misattribute another
+          // document's drugs to this one just to avoid an empty list.
+          const added = all.filter((x) => !priorDrugs.includes(x))
+          return { drugs: added }
+        }
+      } catch { /* transient — keep polling */ }
+    }
+    return { drugs: [], note: "Timed out reading this file." }
+  }
+
+  // Multiple files: upload + wait for each ONE AT A TIME (server merges into the same
+  // signals.prescription_ocr record — see _merge_prescription_ocr), so results never race.
+  async function uploadAll(files: File[]) {
+    if (appId == null || !files.length) return
+    const startIdx = docs.length
+    setDocs((cur) => [...cur, ...files.map((f) => ({ name: f.name, status: "reading" as const, drugs: [] }))])
+    let priorDrugs = docs.flatMap((d) => d.drugs)
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const body = new FormData()
+        body.append("app_id", String(appId))
+        body.append("file", files[i])
+        const r = await fetch("/api/journey/prescription", { method: "POST", body }).then((x) => x.json())
+        if (!r.success) {
+          setDocs((cur) => cur.map((d, j) => j === startIdx + i ? { ...d, status: "error", note: r.message || "Upload failed." } : d))
+          continue
+        }
+        const { drugs, note } = await pollForNewDrugs(priorDrugs)
+        priorDrugs = [...priorDrugs, ...drugs]
+        setDocs((cur) => cur.map((d, j) => j === startIdx + i
+          ? { ...d, status: note && !drugs.length ? "error" : "done", drugs, note } : d))
+      } catch {
+        setDocs((cur) => cur.map((d, j) => j === startIdx + i ? { ...d, status: "error", note: "Couldn't upload — try again." } : d))
+      }
+    }
+  }
+
+  const busy = docs.some((d) => d.status === "reading")
+
+  return (
+    <section>
+      <RegionHead title="Prescription (optional)" hint="Upload one or more prescriptions or medical reports — helps us ask fewer follow-up questions." />
+      <div className="rounded-xl border border-border bg-white p-4">
+        {docs.length > 0 ? (
+          <div className="space-y-2">
+            {docs.map((d, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className={`grid place-items-center size-9 rounded-lg border shrink-0 ${
+                  d.status === "done" ? "stat-ok" : d.status === "error" ? "stat-bad" : "bg-primary/10 text-primary border-transparent"}`}>
+                  {d.status === "reading" ? <Spinner weight="bold" className="size-4 animate-spin" />
+                    : d.status === "error" ? <Warning weight="fill" className="size-[18px]" />
+                    : <FirstAid weight="fill" className="size-[18px]" />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13.5px] font-semibold truncate">{d.name}</div>
+                  <div className="text-[12px] text-muted-foreground truncate">
+                    {d.status === "reading" ? "Reading…"
+                      : d.status === "error" ? (d.note || "Couldn't read this file.")
+                      : d.drugs.length ? `Noted: ${d.drugs.join(", ")}` : "Read — no new medication noted."}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <button type="button" disabled={busy} onClick={() => inputRef.current?.click()}
+              className="mt-1 text-[12px] font-medium text-primary hover:underline disabled:opacity-50">
+              + Add another document
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-start gap-3">
+            <span className="grid place-items-center size-9 rounded-lg bg-primary/10 text-primary shrink-0"><UploadSimple weight="regular" className="size-[18px]" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] text-muted-foreground leading-snug">
+                Clear photos or PDFs of prescriptions or reports — you can select more than one at a time. We read the medication and notes automatically.
+              </p>
+              <button type="button" disabled={busy}
+                onClick={() => inputRef.current?.click()}
+                className="mt-2.5 inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground text-[13px] font-medium px-4 h-9 hover:bg-primary/90 transition-colors disabled:opacity-60">
+                <UploadSimple weight="bold" className="size-4" /> Upload prescription(s)
+              </button>
+            </div>
+          </div>
+        )}
+        <input ref={inputRef} type="file" accept="image/*,.pdf" multiple className="hidden"
+          onChange={(e) => { const files = Array.from(e.target.files ?? []); if (files.length) uploadAll(files); e.target.value = "" }} />
+      </div>
     </section>
   )
 }

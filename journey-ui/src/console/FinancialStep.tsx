@@ -99,10 +99,20 @@ function BankStatement({ appId, snap, declared }: { appId: number | null; snap: 
     body.append("app_id", String(appId))
     body.append("file", file)
     try {
+      // The upload returns immediately ("processing") — iAdore runs in the background (~40s,
+      // too long to hold the connection open behind the proxy). Poll the app snapshot until
+      // account_aggregator lands. ~90s budget (3s × 30) covers iAdore's worst-case latency.
       const r = await fetch("/api/journey/bank-statement", { method: "POST", body })
       const d = await r.json()
-      if (d.success) setState("done")
-      else { setState("error"); setMsg(d.message || "Analysis unavailable — you can proceed.") }
+      if (!d.success) { setState("error"); setMsg(d.message || "Upload failed — you can proceed."); return }
+      for (let i = 0; i < 30; i++) {
+        await new Promise((res) => setTimeout(res, 3000))
+        const s = await fetch(`/api/journey/app/${appId}`).then((x) => x.json()).catch(() => null)
+        const aa = s?.signals?.account_aggregator
+        if (aa?.status === "available") { setState("done"); return }
+      }
+      // Timed out waiting — the analysis may still complete; the rail will reflect it. Not a hard fail.
+      setState("error"); setMsg("Still analysing — you can proceed; income will be corroborated shortly.")
     } catch { setState("error"); setMsg("Upload failed — you can proceed; income can be corroborated later.") }
   }
 

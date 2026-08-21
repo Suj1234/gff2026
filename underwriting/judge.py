@@ -114,6 +114,21 @@ def configure_lm(eval_mode: Optional[bool] = None) -> bool:
 
     Prod  (eval_mode=False): response caching OFF, call-history retention OFF.
     Eval  (eval_mode=True) : caching ON (reproducible replay), history ON (debug).
+
+    THREAD OWNERSHIP (found 2026-08-21, real prod bug): DSPy's `dspy.configure()` may
+    only ever be called again by the SAME OS thread that called it first in this
+    process (`dspy/dsp/utils/settings.py:_ensure_configure_allowed` — a process-global
+    `config_owner_thread_id`, not per-module). This module and `journey/health_agent/
+    engine.py` BOTH call `configure_lm()` at import time; FastAPI's sync route handlers
+    run on `anyio` threadpool workers, so which OS thread lazily imports which module
+    first is non-deterministic per request. Whichever import runs second, on a thread
+    that isn't the original owner, made `dspy.configure()` raise — a fast (~200ms),
+    100% reproducible RuntimeError on that thread, not LLM flakiness. Since the settings
+    DSPy configures are process-global (any thread reads the same `main_thread_config`
+    per the class docstring), a second thread does NOT need to reconfigure at all if an
+    LM is already live — so a same-model, cross-thread call is a safe no-op, not a
+    genuine conflict. A same-thread re-configure (e.g. the live-test fixtures swapping
+    models mid-test) still goes through `dspy.configure()` normally and is unaffected.
     """
     model = os.environ.get("LLM_MODEL")
     if not model:
@@ -125,8 +140,27 @@ def configure_lm(eval_mode: Optional[bool] = None) -> bool:
     kwargs = {"api_base": api_base} if api_base else {}
     # cache=False in prod: never serve a stale ruling for a changed proposal.
     # timeout: fail fast on an unreachable gateway instead of hanging the caller.
-    lm = dspy.LM(model, cache=eval_mode, timeout=LLM_TIMEOUT_S, num_retries=0, **kwargs)
-    dspy.configure(lm=lm)
+    # temperature=0: found 2026-08-21 — the health-agent's TriageConditions call is
+    # non-deterministic without this (same ABHA+prescription facts flagged 4 conditions
+    # on one run, only 2 on the next — asthma/thyroid silently dropped despite clear
+    # supporting evidence in the input). Every use of this shared LM config (triage,
+    # the adaptive-question/summarize calls, the grey-zone judge) benefits from
+    # determinism the same way; there's no case here where sampling variety is wanted
+    # over a repeatable answer to the same facts.
+    lm = dspy.LM(model, cache=eval_mode, timeout=LLM_TIMEOUT_S, num_retries=0, temperature=0, **kwargs)
+    try:
+        dspy.configure(lm=lm)
+    except RuntimeError as exc:
+        if "can only be changed by the thread that initially configured it" not in str(exc):
+            raise  # a genuinely different failure — do not swallow it
+        # Another thread already owns dspy.configure() in this process. Its config is
+        # process-global and this thread can already see/use it (dspy.settings.lm) — so
+        # as long as SOME lm is configured, this thread is ready; only the OWNING
+        # thread can ever change which model is active again (a real, documented DSPy
+        # limitation, not something we can work around without a config-owner redesign).
+        if dspy.settings.lm is None:
+            raise  # truly unconfigured and unrecoverable from this thread
+        return True
 
     # DSPy keeps ~10k calls in lm.history by default → OOM in prod (files/CLAUDE.md
     # line 19). Disable retention explicitly in prod via BOTH knobs: the canonical

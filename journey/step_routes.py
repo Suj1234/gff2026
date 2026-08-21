@@ -13,17 +13,19 @@ from __future__ import annotations
 
 import copy
 import os
+import threading
 import time
 import uuid
+from collections import defaultdict
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from . import auth, digilocker
-from .db import get_session, track_api_call, track_event
+from .db import get_session, session_scope, track_api_call, track_event
 from .models import Application, Consent
 from .models import Session as SessionRow
 
@@ -36,6 +38,31 @@ callback_router = APIRouter(tags=["journey-steps"])
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+# Found 2026-08-21 (health-agent chat): a route reads `app.bundle` (via `_require_app`),
+# does business logic against that snapshot (sometimes a live LLM call, as in
+# health_thread_answer), THEN `_mutate_bundle` writes it back. Two overlapping requests
+# for the SAME application (a poll racing a submit, a retry, StrictMode double-fire etc.)
+# each read the same starting bundle and whichever commits LAST silently overwrites the
+# other's write — a classic lost-update race with no exception raised, just a
+# conversation that "forgets" a turn (reproduced directly: two concurrent writers healed
+# to turns_used=1 instead of the correct 2, one transcript entry vanished). SQLite is
+# single-writer for this whole app anyway (files/CLAUDE.md), so the fix is a
+# per-application in-process lock spanning the WHOLE read->logic->write span of a
+# request. A `functools.wraps`-based decorator was tried FIRST and reverted — it broke
+# FastAPI's route registration entirely (FastAPI introspects a route function's real
+# signature for dependency injection; a `*args/**kwargs` wrapper defeats that and the
+# route silently never registers, confirmed via `app.routes`). So each route that reads-
+# then-writes across business logic wraps its OWN body in `with _app_lock(app_id):`
+# explicitly instead — more repetition, but doesn't touch FastAPI's introspection at all.
+_app_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
+_app_locks_guard = threading.Lock()  # protects _app_locks' own dict mutation only
+
+
+def _app_lock(app_id: int) -> threading.Lock:
+    with _app_locks_guard:
+        return _app_locks[app_id]
+
+
 def _require_app(request: Request, app_id: int, db: Session) -> Optional[Application]:
     sess = auth.resolve_session(db, request.cookies.get(auth.COOKIE_NAME))
     if sess is None or sess.application_id != app_id:
@@ -468,16 +495,60 @@ def set_financial(req: FinancialRequest, request: Request, db: Session = Depends
     return {"success": True}
 
 
-@router.post("/bank-statement")
-async def upload_bank_statement(request: Request, db: Session = Depends(get_session)):
-    """Upload a PDF bank statement -> iAdore analyze (real, reusing repo bank_statement.py
-    + adapter) -> merge into signals.account_aggregator + follow_up_observations.bank_statement.
+def _analyze_bank_statement_bg(app_id: int, tmp_path: str) -> None:
+    """Run the iAdore analysis OUT of the request cycle (it takes ~40s — too long to hold an
+    HTTP connection open behind the proxy, which cuts it at ~20-30s → the browser saw
+    'Upload failed' while the backend actually succeeded). Own DB session (the request's is
+    long closed), own temp-file cleanup. Idempotent: re-running just overwrites the result."""
+    t0 = time.time()
+    try:
+        import bank_statement as iadore  # repo-root client (real 3-call flow)
+        from underwriting.sources import bank_statement as adapter
+        raw = iadore.analyze(tmp_path)
+        aa = adapter.to_account_aggregator(raw)
+        with session_scope() as s:
+            app = s.get(Application, app_id)
+            if app is None:
+                return
+            declared = (app.bundle.get("application", {}).get("financial", {})
+                        .get("declared_annual_income"))
+            follow = adapter.to_follow_up_observation(raw, declared_annual_income=declared)
 
-    NOTE: this is a plain document upload, NOT an RBI Account Aggregator consent flow.
-    `signals.account_aggregator` is the ENGINE's internal income-signal key (the BRE reads it
-    for R-007/R-008) — the statement-derived income lands in that slot ("bank statement REPLACES
-    AA", JOURNEY_PLAN §3). The consent recorded is a document-sharing consent, not RBI-AA.
-    Falls back cleanly if iAdore is unreachable (§11)."""
+            def add(bundle):
+                bundle.setdefault("signals", {})["account_aggregator"] = aa
+                bundle.setdefault("follow_up_observations", {})["bank_statement"] = follow
+            _mutate_bundle(app, add)
+            s.add(app)
+            track_api_call(s, provider="iadore", endpoint="submit+poll+report", mode="real",
+                           application_id=app_id, ok=True, latency_ms=int((time.time()-t0)*1000),
+                           response_summary={"imputed_income": aa.get("imputed_annual_income")})
+            track_event(s, event_type="bank_statement_analyzed", application_id=app_id,
+                        detail={"imputed_income": aa.get("imputed_annual_income")})
+    except Exception as e:
+        with session_scope() as s:
+            track_api_call(s, provider="iadore", endpoint="submit+poll+report", mode="real",
+                           application_id=app_id, ok=False, latency_ms=int((time.time()-t0)*1000),
+                           error=str(e)[:200])
+            track_event(s, event_type="bank_statement_error", application_id=app_id,
+                        detail={"error": str(e)[:200]})
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+@router.post("/bank-statement")
+async def upload_bank_statement(request: Request, background: BackgroundTasks,
+                                db: Session = Depends(get_session)):
+    """Upload a PDF bank statement -> iAdore analyze (real, repo bank_statement.py + adapter)
+    -> merge into signals.account_aggregator + follow_up_observations.bank_statement.
+
+    The analysis takes ~40s, longer than the proxy connection timeout, so it runs in the
+    BACKGROUND: this endpoint returns immediately after saving the file; the client polls the
+    app snapshot for `account_aggregator` to appear. `signals.account_aggregator` is the ENGINE's
+    internal income-signal key (the BRE reads it for R-007/R-008 — "bank statement REPLACES AA",
+    JOURNEY_PLAN §3). The consent recorded is a document-sharing consent, not RBI-AA."""
     from fastapi import Form, UploadFile
     form = await request.form()
     app_id = int(form.get("app_id", 0))
@@ -491,7 +562,8 @@ async def upload_bank_statement(request: Request, db: Session = Depends(get_sess
     # Plain document-sharing consent (the applicant hands over their own statement PDF).
     _record_consent(db, app, "bank_statement_upload", "DPDP_Act")
 
-    # Save the upload to a temp path for the iAdore client (it takes a file path).
+    # Save the upload to a temp path for the iAdore client (it takes a file path). The bg task
+    # deletes it when done — NOT here, or it'd vanish before the analysis reads it.
     import tempfile
     from pathlib import Path
     suffix = Path(getattr(upload, "filename", "stmt.pdf")).suffix or ".pdf"
@@ -500,39 +572,118 @@ async def upload_bank_statement(request: Request, db: Session = Depends(get_sess
     tmp.write(data)
     tmp.close()
 
+    background.add_task(_analyze_bank_statement_bg, app.id, tmp.name)
+    return {"success": True, "status": "processing",
+            "message": "Analysing statement — this takes up to a minute."}
+
+
+def _merge_prescription_ocr(existing: dict, new: dict) -> dict:
+    """Multiple prescriptions/reports can be uploaded (one per document) — MERGE, don't
+    overwrite: list fields concatenate (dedup drug names/ICD codes, keep every raw_text/
+    diagnosis_notes entry so the triage LLM sees everything transcribed across all
+    uploads), status stays "available" once ANY upload has succeeded."""
+    if not existing or existing.get("status") != "available":
+        return new
+    if new.get("status") != "available":
+        return existing  # a later failed upload must not erase prior successful ones
+    merged_drugs = list(existing.get("drug_names", []))
+    for d in new.get("drug_names", []):
+        if d not in merged_drugs:
+            merged_drugs.append(d)
+    merged_icd = list(existing.get("icd_codes", []))
+    for c in new.get("icd_codes", []):
+        if c not in merged_icd:
+            merged_icd.append(c)
+    return {
+        "status": "available",
+        "raw_text": [*existing.get("raw_text", []), *new.get("raw_text", [])],
+        "drug_names": merged_drugs,
+        "icd_codes": merged_icd,
+        "diagnosis_notes": [*existing.get("diagnosis_notes", []), *new.get("diagnosis_notes", [])],
+    }
+
+
+def _analyze_prescription_bg(app_id: int, tmp_path: str) -> None:
+    """Same shape as `_analyze_bank_statement_bg`: OCR runs OUT of the request cycle (a
+    Gemini vision call, seconds not minutes, but still not worth holding the connection
+    open for). Own DB session, own temp-file cleanup. Multiple uploads MERGE (see
+    `_merge_prescription_ocr`) rather than overwrite — the applicant can upload more than
+    one document (e.g. an old prescription + a recent lab report)."""
     t0 = time.time()
     try:
-        import bank_statement as iadore  # repo-root client (real 3-call flow)
-        from underwriting.sources import bank_statement as adapter
-        raw = iadore.analyze(tmp.name)
-        aa = adapter.to_account_aggregator(raw)
-        declared = (app.bundle.get("application", {}).get("financial", {})
-                    .get("declared_annual_income"))
-        follow = adapter.to_follow_up_observation(raw, declared_annual_income=declared)
+        from prescription_ocr import extract  # repo-root Gemini vision client
+        from underwriting.sources.prescription_ocr import to_prescription_ocr
+        raw = extract(tmp_path)
+        adapted = to_prescription_ocr(raw)
+        with session_scope() as s:
+            app = s.get(Application, app_id)
+            if app is None:
+                return
 
-        def add(bundle):
-            bundle.setdefault("signals", {})["account_aggregator"] = aa
-            bundle.setdefault("follow_up_observations", {})["bank_statement"] = follow
-        _mutate_bundle(app, add)
-        db.add(app)
-        track_api_call(db, provider="iadore", endpoint="submit+poll+report", mode="real",
-                       application_id=app.id, ok=True, latency_ms=int((time.time()-t0)*1000),
-                       response_summary={"imputed_income": aa.get("imputed_annual_income")})
-        track_event(db, event_type="bank_statement_analyzed", application_id=app.id,
-                    detail={"imputed_income": aa.get("imputed_annual_income")})
-        return {"success": True, "account_aggregator": aa}
+            def add(bundle):
+                sig = bundle.setdefault("signals", {})
+                sig["prescription_ocr"] = _merge_prescription_ocr(
+                    sig.get("prescription_ocr", {}), adapted)
+            _mutate_bundle(app, add)
+            s.add(app)
+            track_api_call(s, provider="gemini_ocr", endpoint="prescription", mode="real",
+                           application_id=app_id, ok=True, latency_ms=int((time.time()-t0)*1000),
+                           response_summary={"drug_names": adapted.get("drug_names", [])})
+            track_event(s, event_type="prescription_ocr_analyzed", application_id=app_id,
+                        detail={"n_drugs": len(adapted.get("drug_names", []))})
     except Exception as e:
-        track_api_call(db, provider="iadore", endpoint="submit+poll+report", mode="real",
-                       application_id=app.id, ok=False, latency_ms=int((time.time()-t0)*1000),
-                       error=str(e)[:200])
-        track_event(db, event_type="bank_statement_error", application_id=app.id,
-                    detail={"error": str(e)[:200]})
-        return {"success": False, "message": "Bank-statement analysis unavailable — you can proceed; income can be corroborated later (STEP_UP)."}
+        with session_scope() as s:
+            track_api_call(s, provider="gemini_ocr", endpoint="prescription", mode="real",
+                           application_id=app_id, ok=False, latency_ms=int((time.time()-t0)*1000),
+                           error=str(e)[:200])
+            track_event(s, event_type="prescription_ocr_error", application_id=app_id,
+                        detail={"error": str(e)[:200]})
+            # Fail safe (§11): even on OCR failure, stamp an `unavailable` signal so the
+            # UI's poll for "prescription_ocr present" resolves instead of spinning forever.
+            app = s.get(Application, app_id)
+            if app is not None:
+                def add(bundle):
+                    bundle.setdefault("signals", {}).setdefault(
+                        "prescription_ocr", {"status": "unavailable"})
+                _mutate_bundle(app, add)
+                s.add(app)
     finally:
         try:
-            os.unlink(tmp.name)
+            os.unlink(tmp_path)
         except OSError:
             pass
+
+
+@router.post("/prescription")
+async def upload_prescription(request: Request, background: BackgroundTasks,
+                              db: Session = Depends(get_session)):
+    """Upload a prescription/MER image or PDF -> Gemini-vision OCR (repo-root
+    prescription_ocr.py) -> adapter -> signals.prescription_ocr. Optional input (§2 of
+    HEALTH_AGENT_PLAN.md) — the health-agent triage step reads it if present, reasons
+    around it if not. Backgrounded for the same reason as bank-statement upload: don't
+    hold the HTTP connection open across a vendor/LLM call."""
+    from pathlib import Path
+    import tempfile
+    form = await request.form()
+    app_id = int(form.get("app_id", 0))
+    upload = form.get("file")
+    app = _require_app(request, app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+    if upload is None:
+        return {"success": False, "message": "no file"}
+
+    _record_consent(db, app, "prescription_upload", "DPDP_Act")
+
+    suffix = Path(getattr(upload, "filename", "rx.png")).suffix or ".png"
+    data = await upload.read()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.write(data)
+    tmp.close()
+
+    background.add_task(_analyze_prescription_bg, app.id, tmp.name)
+    return {"success": True, "status": "processing",
+            "message": "Reading prescription — this takes a few seconds."}
 
 
 # ---------------------------------------------------------------------------
@@ -614,7 +765,16 @@ def face_scan_start(app_id: int, request: Request, db: Session = Depends(get_ses
         creds.callback_url = f"{os.getenv('PUBLIC_API_URL', '').rstrip('/')}" \
                              f"/api/journey/face-scan/callback?key={os.getenv('NURALX_CALLBACK_SECRET', '')}"
         applicant = app.bundle.get("application", {}).get("applicant", {})
-        patient = nuralx.Patient(name=applicant.get("name") or "Applicant")
+        mobile = applicant.get("mobile")
+        # NuralX's patient-data call hard-requires name AND email (500s otherwise) — but
+        # email is optional at Step 1 (JOURNEY_PLAN §Step1) and often absent by Step 4.
+        # Synthesize a placeholder from the mobile on file so the call always has one;
+        # NuralX never emails it, this is only to satisfy their required-field check.
+        email = (app.bundle.get("signals", {}).get("email_intel", {}) or {}).get("email")
+        if not email:
+            email = f"{mobile or app.id}@noemail.gff2026.local"
+        patient = nuralx.Patient(name=applicant.get("name") or "Applicant",
+                                 email=email, phone=mobile)
         resp = nuralx.initiate_scan(creds, session_token=ctid, patient=patient)
         # persist a FaceScanSession so the webhook can correlate + resolve
         from .models import FaceScanSession
@@ -801,6 +961,251 @@ def abha_fetch(app_id: int, request: Request, otp: str = "", db: Session = Depen
                 detail={"diagnoses": record.get("diagnoses", [])[:5]})
     return {"success": True, "diagnoses": record.get("diagnoses", []),
             "icd_codes": record.get("icd_codes", [])}
+
+
+# ---------------------------------------------------------------------------
+# Health-triage agent (HEALTH_AGENT_PLAN.md §6) — conversational deep-dive, adaptive
+# per-condition, run ONLY after face-scan/ABHA/prescription facts are in. Three
+# endpoints, turn-by-turn like everything else here: no long-lived server-side session
+# beyond the bundle — in-progress thread state lives at bundle["_journey"]["health_agent"],
+# same place the ABHA OTP stash lives (§6's design note).
+# ---------------------------------------------------------------------------
+class HealthTriageRequest(BaseModel):
+    app_id: int
+
+
+@router.post("/health/triage/{app_id}")
+def health_triage(app_id: int, request: Request, db: Session = Depends(get_session)) -> dict:
+    """Holds `_app_lock(app_id)` for the whole call INCLUDING an explicit `db.commit()`
+    before releasing (see the helpers-section comment on why) then delegates to
+    `_health_triage_impl` — kept as a thin wrapper, not a `with` block wrapping the whole
+    body below, so the real logic's indentation/diff stays readable rather than
+    re-nested one level for the lock.
+
+    The explicit commit matters: `get_session`'s own `s.commit()` runs AFTER this
+    function returns (in its post-yield teardown) — i.e. AFTER the lock has already been
+    released. Without committing HERE, first, two requests can run their bodies fully
+    serialized by the lock yet still commit in overlapping order once each one's `db`
+    dependency teardown fires outside the lock, recreating the exact race the lock was
+    meant to close (found + reproduced while verifying this fix)."""
+    with _app_lock(app_id):
+        result = _health_triage_impl(app_id, request, db)
+        db.commit()
+        return result
+
+
+def _health_triage_impl(app_id: int, request: Request, db: Session) -> dict:
+    """Phase 1 (HEALTH_AGENT_PLAN.md §3): read whatever face-scan/ABHA/prescription
+    facts are already in the bundle, run one triage call, return the flagged condition
+    buckets. Silent to the applicant — the UI decides what to do with `flagged` (start
+    a chat thread per bucket, or skip straight to the fixed mandatory screeners if empty)."""
+    app = _require_app(request, app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+
+    from journey.health_agent.engine import run_triage
+    from journey.health_agent.config import CONDITION_BUCKETS
+
+    signals = app.bundle.get("signals", {}) or {}
+    rppg = signals.get("rppg_scan", {}) or {}
+    facial = signals.get("facial_bmi_smoking", {}) or {}
+    face_scan_facts = {**rppg.get("vitals", {}), **rppg.get("vitals_extra", {}),
+                        "bmi_estimate": facial.get("bmi_estimate"),
+                        "smoking_estimate": facial.get("smoking_estimate")} if rppg.get("status") == "available" else {}
+    abha = signals.get("abha_health_records", {}) or {}
+    abha_facts = abha if abha.get("status") == "available" else {}
+    presc = signals.get("prescription_ocr", {}) or {}
+    prescription_facts = presc if presc.get("status") == "available" else {}
+
+    try:
+        flagged = run_triage(face_scan_facts=face_scan_facts, abha_facts=abha_facts,
+                              prescription_facts=prescription_facts)
+    except RuntimeError as exc:
+        # No LLM configured — degrade to "nothing flagged" so the UI falls back to the
+        # fixed mandatory screeners rather than blocking the journey (§11 no-crash).
+        track_event(db, event_type="health_triage_unavailable", application_id=app.id,
+                    detail={"reason": str(exc)})
+        return {"success": True, "flagged": []}
+    except Exception as exc:  # noqa: BLE001 — a live LLM call: bad JSON, gateway timeout,
+        # DSPy parse failure, etc. are all real possibilities on any given call and must
+        # NOT surface as a 500 (the UI's "Try again" depends on a real success/failure
+        # shape, not a raw HTTP error) — degrade the same way as "no LLM configured".
+        track_event(db, event_type="health_triage_error", application_id=app.id,
+                    detail={"error": str(exc)[:200]})
+        return {"success": False, "message": "Could not run the health check — please try again."}
+
+    def add(bundle):
+        j = bundle.setdefault("_journey", {}).setdefault("health_agent", {})
+        j["flagged"] = flagged
+        j["threads"] = {}  # bucket -> thread state, filled in by thread/start
+    _mutate_bundle(app, add)
+    db.add(app)
+    track_event(db, event_type="health_triage_run", application_id=app.id,
+                detail={"flagged": [f["bucket"] for f in flagged]})
+
+    labelled = [{**f, "label": CONDITION_BUCKETS[f["bucket"]]["label"]} for f in flagged]
+    return {"success": True, "flagged": labelled}
+
+
+class HealthThreadStartRequest(BaseModel):
+    app_id: int
+    bucket: str
+
+
+@router.post("/health/thread/start/{app_id}")
+def health_thread_start(app_id: int, req: HealthThreadStartRequest, request: Request,
+                         db: Session = Depends(get_session)) -> dict:
+    """Thin lock-holding wrapper, committing before release — see `health_triage`'s
+    docstring for why the explicit `db.commit()` here matters."""
+    with _app_lock(app_id):
+        result = _health_thread_start_impl(app_id, req, request, db)
+        db.commit()
+        return result
+
+
+def _health_thread_start_impl(app_id: int, req: HealthThreadStartRequest, request: Request,
+                               db: Session) -> dict:
+    """Start (or resume) one condition's adaptive conversation thread — one HTTP call,
+    returns the FIRST question. `bucket` must be one flagged by /health/triage."""
+    app = _require_app(request, app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+
+    from journey.health_agent.engine import new_thread_state, step_thread
+    from journey.health_agent.config import CONDITION_BUCKETS
+
+    if req.bucket not in CONDITION_BUCKETS:
+        return {"success": False, "message": "unknown condition bucket"}
+
+    j = (app.bundle.get("_journey", {}) or {}).get("health_agent", {}) or {}
+    flagged_buckets = {f["bucket"]: f for f in (j.get("flagged") or [])}
+    trigger_fact = (flagged_buckets.get(req.bucket) or {}).get("trigger_fact", "")
+
+    state = new_thread_state(req.bucket, trigger_fact)
+    state = step_thread(state, None)
+
+    def add(bundle):
+        threads = bundle.setdefault("_journey", {}).setdefault("health_agent", {}).setdefault("threads", {})
+        threads[req.bucket] = state
+    _mutate_bundle(app, add)
+    db.add(app)
+    track_event(db, event_type="health_thread_started", application_id=app.id,
+                detail={"bucket": req.bucket})
+
+    return {"success": True, "question": state["next_question"], "thread_id": req.bucket}
+
+
+class HealthThreadAnswerRequest(BaseModel):
+    app_id: int
+    thread_id: str  # the bucket key — one thread per bucket, so this doubles as the id
+    answer: str
+
+
+@router.post("/health/thread/answer/{app_id}")
+def health_thread_answer(app_id: int, req: HealthThreadAnswerRequest, request: Request,
+                          db: Session = Depends(get_session)) -> dict:
+    """Thin lock-holding wrapper, committing before release — see `health_triage`'s
+    docstring for why the explicit `db.commit()` here matters."""
+    with _app_lock(app_id):
+        result = _health_thread_answer_impl(app_id, req, request, db)
+        db.commit()
+        return result
+
+
+def _health_thread_answer_impl(app_id: int, req: HealthThreadAnswerRequest, request: Request,
+                                db: Session) -> dict:
+    """One adaptive-loop turn (HEALTH_AGENT_PLAN.md §4): re-reads the WHOLE conversation
+    so far (via the persisted thread state), decides the next question — following
+    whatever the last answer implied — or closes the thread out with a summary. On
+    close, if the bounded second-pass catch-all (§4.2) produced a new bucket, it's
+    returned as `next_thread` so the UI can call thread/start again with no new
+    endpoint needed."""
+    app = _require_app(request, app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+
+    from journey.health_agent.engine import step_thread, run_triage
+    from journey.health_agent.config import CONDITION_BUCKETS, MAX_SECOND_PASS_BUCKETS
+
+    j = (app.bundle.get("_journey", {}) or {}).get("health_agent", {}) or {}
+    threads = j.get("threads") or {}
+    state = threads.get(req.thread_id)
+    if state is None:
+        return {"success": False, "message": "unknown or expired thread"}
+    if state.get("done"):
+        return {"success": True, "done": True, "summary": state.get("summary"), "next_thread": None}
+
+    # CRITICAL: deep-copy before step_thread mutates it. `state` here is a NESTED
+    # reference living inside `app.bundle` — the SQLAlchemy-tracked MutableDict column.
+    # `step_thread` mutates it IN PLACE (`state["turns_used"] += 1`,
+    # `state["transcript"].append(...)`) — MutableDict only instruments the TOP-LEVEL
+    # dict's own __setitem__, it never sees a mutation on a list/dict nested inside it.
+    # So that in-place mutation silently corrupts `app.bundle`'s live in-memory value
+    # BEFORE `_mutate_bundle` below even runs its own deep-copy — by the time
+    # `_mutate_bundle` snapshots "the current value" to diff against, it's already
+    # equal to the "new" value being written back, so SQLAlchemy's dirty-check sees NO
+    # net change and silently skips the UPDATE entirely. Found 2026-08-21: every answer
+    # in a health-agent chat conversation was computed correctly and even looked right
+    # in the HTTP response, but NOTHING actually persisted — turns_used stayed 0
+    # forever, so the agent re-asked the same opening question over and over,
+    # completely ignoring the turn cap (verified with SQL-level tracing: `before_flush`
+    # showed the correct value, but zero UPDATE statements were ever issued).
+    state = copy.deepcopy(state)
+    state = step_thread(state, req.answer)
+
+    next_thread = None
+    if state["done"]:
+        # §4.2's bounded second pass: only run once, only if this thread closing means
+        # ALL flagged threads are now done (mirrors run_all_threads' orchestration, but
+        # spread across HTTP calls instead of one blocking loop).
+        all_threads = {**threads, req.thread_id: state}
+        flagged_buckets = {f["bucket"] for f in (j.get("flagged") or [])}
+        all_done = all(all_threads.get(b, {}).get("done") for b in flagged_buckets)
+        already_second_pass = j.get("second_pass_run", False)
+        if all_done and not already_second_pass:
+            volunteered_text = [c for t in all_threads.values() for c in (t.get("unprompted_conditions") or [])]
+            if volunteered_text:
+                try:
+                    second_pass = run_triage(volunteered_text=volunteered_text)
+                except RuntimeError:
+                    second_pass = []
+                already_run = set(all_threads)
+                new_buckets = [f for f in second_pass if f["bucket"] not in already_run][:MAX_SECOND_PASS_BUCKETS]
+                if new_buckets:
+                    nb = new_buckets[0]
+                    next_thread = {"bucket": nb["bucket"], "label": CONDITION_BUCKETS[nb["bucket"]]["label"],
+                                    "trigger_fact": nb["trigger_fact"]}
+
+    def add(bundle):
+        j2 = bundle.setdefault("_journey", {}).setdefault("health_agent", {})
+        j2.setdefault("threads", {})[req.thread_id] = state
+        if state["done"]:
+            # Fold the closed thread's structured summary into the declared facts +
+            # audit transcript (HEALTH_AGENT_PLAN.md §5) — additive, never a verdict.
+            hd = bundle.setdefault("application", {}).setdefault("health_declaration", {})
+            cd = hd.setdefault("condition_detail", [])
+            cd.append({"condition": state["bucket"], "trigger_fact": state["trigger_fact"],
+                       **state["summary"], "ended_reason": state["ended_reason"], "source": "health_agent"})
+            sig = bundle.setdefault("signals", {}).setdefault("health_agent_transcript", {"status": "available", "threads": []})
+            sig["status"] = "available"
+            sig["threads"].append({"bucket": state["bucket"], "trigger_fact": state["trigger_fact"],
+                                   "transcript": state["transcript"], "turns_used": state["turns_used"],
+                                   "ended_reason": state["ended_reason"],
+                                   "unprompted_conditions": state["unprompted_conditions"]})
+            if next_thread is not None:
+                j2["second_pass_run"] = True
+                flagged = j2.setdefault("flagged", [])
+                flagged.append({"bucket": next_thread["bucket"], "trigger_fact": next_thread["trigger_fact"],
+                                "confidence": "medium"})
+    _mutate_bundle(app, add)
+    db.add(app)
+    track_event(db, event_type="health_thread_answered", application_id=app.id,
+                detail={"bucket": req.thread_id, "done": state["done"],
+                       "ended_reason": state.get("ended_reason")})
+
+    if state["done"]:
+        return {"success": True, "done": True, "summary": state["summary"], "next_thread": next_thread}
+    return {"success": True, "done": False, "question": state["next_question"]}
 
 
 # ---------------------------------------------------------------------------
@@ -1070,7 +1475,12 @@ def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -
             "rppg_scan": signals.get("rppg_scan", {}) or {},                    # Step 4 face-scan vitals
             "liveness_facematch": signals.get("liveness_facematch", {}) or {},  # Step 4 liveness/deepfake
             "abha_health_records": signals.get("abha_health_records", {}) or {},# Step 4 ABHA fetch state
+            "prescription_ocr": signals.get("prescription_ocr", {}) or {},      # Step 4 prescription upload state
         },
+        # Step 4 health-agent state (HEALTH_AGENT_PLAN.md §6): triage result + one
+        # in-progress/completed thread state per bucket, so the chat UI can resume on
+        # revisit instead of restarting the conversation from scratch.
+        "health_agent": (bundle.get("_journey", {}) or {}).get("health_agent", {}) or {},
     }
 
 

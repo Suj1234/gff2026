@@ -74,12 +74,18 @@ def send_otp(req: SendOtpRequest, db: Session = Depends(get_session)) -> dict:
 
     plaintext, row = otp.create_otp(db, target=req.mobile, channel="sms", purpose=req.purpose)
 
+    # MOBILE_PAN_MOCK_MODE=1 (journey testing/CI) must skip the REAL SMS send too, not just
+    # the downstream Mobile->PAN prefill — otherwise "mock mode" still texts the applicant's
+    # phone every time (found 2026-08-21: this exact gap sent 3 real OTPs during testing).
     t0 = time.time()
-    result = msg91.send_sms_otp(req.mobile, plaintext)
+    if mobile_pan.mock_mode_enabled():
+        result = msg91.SendResult(sent=False, error="MOBILE_PAN_MOCK_MODE=1 — real SMS skipped")
+    else:
+        result = msg91.send_sms_otp(req.mobile, plaintext)
     latency_ms = int((time.time() - t0) * 1000)
     track_api_call(
         db, provider="msg91", endpoint="/api/v5/flow",
-        mode="real" if msg91.creds_present() else "mock",
+        mode="mock" if mobile_pan.mock_mode_enabled() else ("real" if msg91.creds_present() else "mock"),
         request_summary={"mobile": req.mobile, "purpose": req.purpose},
         response_summary={"sent": result.sent},
         ok=result.sent, http_status=result.http_status, latency_ms=latency_ms,
@@ -197,7 +203,24 @@ def verify_otp(req: VerifyOtpRequest, response: Response,
 
 
 def _prefill_from_mobile(db: Session, app: Application, mobile: str) -> None:
-    """Fetch the profile and merge it into the bundle. Records real vs unavailable."""
+    """Fetch the profile and merge it into the bundle. Records real vs unavailable.
+
+    MOBILE_PAN_MOCK_MODE=1 (journey testing/CI, HEALTH_AGENT_PLAN.md Phase K) skips the
+    real vendor call entirely and merges a canned profile instead — every mobile number
+    resolves instantly, no network, no vendor timeout/502 risk. Off by default; the
+    existing MOBILE_PAN_* creds path is completely unaffected when this isn't set."""
+    if mobile_pan.mock_mode_enabled():
+        data = mobile_pan.mock_profile_for(mobile)
+        _merge_profile_into_bundle(app, data)
+        db.add(app)
+        db.flush()
+        track_api_call(db, provider="mobile_pan", endpoint="(mock mode)", mode="mock",
+                       application_id=app.id, ok=True,
+                       request_summary={"mobile": mobile},
+                       response_summary={"keys": sorted(data.keys())})
+        track_event(db, event_type="profile_prefilled", application_id=app.id,
+                    detail={"pan": (data.get("pan") or "")[:10], "mock": True})
+        return
     if not mobile_pan.configured():
         track_api_call(db, provider="mobile_pan", endpoint="(unconfigured)", mode="mock",
                        application_id=app.id, ok=False,

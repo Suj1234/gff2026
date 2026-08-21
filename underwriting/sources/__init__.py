@@ -64,3 +64,4 @@ from . import litigation as _litigation    # noqa: E402,F401
 from . import email as _email              # noqa: E402,F401
 from . import bank_statement as _bank_statement  # noqa: E402,F401
 from . import nuralx as _nuralx            # noqa: E402,F401
+from . import prescription_ocr as _prescription_ocr  # noqa: E402,F401

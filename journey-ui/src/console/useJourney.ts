@@ -34,6 +34,24 @@ export type Signals = {
   }
   liveness_facematch?: { status?: string; liveness_pass?: boolean; liveness_score?: number; face_match_score?: number; deepfake_flag?: boolean }
   abha_health_records?: { status?: string; diagnoses?: string[]; icd_codes?: string[] }
+  prescription_ocr?: { status?: string; drug_names?: string[]; diagnosis_notes?: string[] }
+}
+// Health-triage agent state (HEALTH_AGENT_PLAN.md §6-§7) — one flagged bucket + its
+// thread state, as persisted server-side and echoed back by GET /app/{id}.
+export type HealthThreadState = {
+  bucket: string; trigger_fact: string
+  transcript: { q: string; a: string }[]
+  covered: string[]; turns_used: number
+  done: boolean; ended_reason?: "complete" | "turn_cap" | null
+  next_question?: string | null
+  summary?: { onset?: string | null; current_status?: string | null; treatment?: string | null
+    severity_notes?: string | null; free_text_summary?: string } | null
+  unprompted_conditions?: string[]
+}
+export type HealthAgentState = {
+  flagged?: { bucket: string; label?: string; trigger_fact: string; confidence?: string }[]
+  threads?: Record<string, HealthThreadState>
+  second_pass_run?: boolean
 }
 export type AppSnapshot = {
   success: boolean
@@ -44,6 +62,7 @@ export type AppSnapshot = {
   financial?: Financial
   product?: Product
   health_declaration?: Record<string, unknown>   // Step 4 pre-fill on revisit (flat payload)
+  health_agent?: HealthAgentState                 // Step 4 conversational deep-dive state
   status?: string
   signals: Signals
   seeded?: boolean

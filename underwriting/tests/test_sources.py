@@ -118,6 +118,7 @@ def test_registry_lists_shipped_adapters():
     assert "account_aggregator" in sources.registered()
     assert "litigation_fir" in sources.registered()
     assert "email_intel" in sources.registered()
+    assert "prescription_ocr" in sources.registered()
 
 
 # A canned RAW litigation block (docs §1 — the mobile→PAN call's `data.litigation`,
@@ -206,3 +207,59 @@ def test_email_adapter_survives_malformed_input():
     assert sources.adapt("email_intel", {"data": {"fraud": {"risk": {"score": "83"}}}})["fraud_risk_score"] == 0.17
     # a bool must not be treated as a numeric score (True/100 nonsense).
     assert sources.adapt("email_intel", {"data": {"fraud": {"risk": {"score": True}}}})["fraud_risk_score"] is None
+
+
+# A canned RAW prescription-OCR extraction (HEALTH_AGENT_PLAN.md §2/§10) — this is the
+# ACTUAL output captured from a live gemini-2.5-flash call against a synthetic cardiac
+# prescription (underwriting/tests/fixtures/prescriptions/sample_cardiac_statin.png,
+# verified 2026-08-21), not hand-invented — so the adapter is tested against a real
+# vendor shape, same discipline as RAW_PAN/RAW_AA above.
+RAW_PRESCRIPTION = {
+    "clinic_or_doctor": "Apex Heart & Vascular Centre",
+    "patient_name": "Vikram Nair",
+    "date": "03-Jan-2025",
+    "diagnosis_notes": "Known case of Ischaemic Heart Disease s/p PTCA (2021). Stable "
+                        "angina, on secondary prevention therapy.",
+    "drugs": [
+        {"name": "Tab. Atorvastatin 20mg", "dosage": "0-0-1 (at night)", "duration": "90 days"},
+        {"name": "Tab. Metoprolol 25mg", "dosage": "1-0-1", "duration": "90 days"},
+        {"name": "Tab. Aspirin 75mg", "dosage": "0-1-0 (after lunch)", "duration": "90 days"},
+    ],
+    "raw_text": "Apex Heart & Vascular Centre\nDr. Suresh Menon...\nRx\n1. Tab. "
+                "Atorvastatin 20mg\n0-0-1 (at night) - 90 days\n...",
+}
+
+
+def test_prescription_ocr_adapter_maps_to_internal_contract():
+    internal = sources.adapt("prescription_ocr", RAW_PRESCRIPTION)
+    assert internal["status"] == "available"
+    assert internal["drug_names"] == [
+        "Tab. Atorvastatin 20mg", "Tab. Metoprolol 25mg", "Tab. Aspirin 75mg",
+    ]
+    assert internal["diagnosis_notes"] == [RAW_PRESCRIPTION["diagnosis_notes"]]
+    assert internal["raw_text"] and "Apex Heart" in internal["raw_text"][0]
+    # ProposalInput accepts it as-is (it IS the internal shape now).
+    ProposalInput(**{
+        "proposal_id": "ADAPT-RX",
+        "application": {"applicant": {"name": "Vikram Nair", "age": 58},
+                        "product": {"type": "individual_health", "sum_assured": 500000}},
+        "signals": {"prescription_ocr": internal},
+    })
+
+
+def test_prescription_ocr_adapter_no_upload_is_unavailable():
+    """No document uploaded / OCR never ran → unavailable, not a clean empty record
+    (§11) — absent ≠ assessed-clean, same discipline as mock_abha.py."""
+    assert sources.adapt("prescription_ocr", None)["status"] == "unavailable"
+    assert sources.adapt("prescription_ocr", {})["status"] == "unavailable"
+
+
+def test_prescription_ocr_adapter_survives_malformed_input():
+    """Trust boundary (§11): a non-list drugs field, non-dict/non-str drug entries, and
+    non-string notes must degrade, never crash."""
+    assert sources.adapt("prescription_ocr", {"drugs": "nope"})["drug_names"] == []
+    assert sources.adapt("prescription_ocr", {"drugs": [1, None, {"name": None}]})["drug_names"] == []
+    assert sources.adapt("prescription_ocr", {"diagnosis_notes": 42})["diagnosis_notes"] == []
+    # a garbled/no-legible-text page is still a completed OCR attempt, not "unavailable":
+    result = sources.adapt("prescription_ocr", {"raw_text": "", "drugs": []})
+    assert result["status"] == "available" and result["drug_names"] == []

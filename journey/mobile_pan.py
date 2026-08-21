@@ -93,3 +93,67 @@ def fetch_by_pan(pan: str, *, insurer_slug: str = "acme", timeout: int = 90) -> 
     base_env = "PAN_PREFILL_BASE_URL" if os.getenv("PAN_PREFILL_BASE_URL") else "MOBILE_PAN_BASE_URL"
     key_env = "PAN_PREFILL_API_KEY" if os.getenv("PAN_PREFILL_API_KEY") else "MOBILE_PAN_API_KEY"
     return _post_prefill(path, payload, timeout, base_env=base_env, key_env=key_env)
+
+
+# ===========================================================================
+# Mock mode — MOBILE_PAN_MOCK_MODE=1 (journey testing/CI, HEALTH_AGENT_PLAN.md Phase K)
+# ===========================================================================
+# Mock the RESPONSE, never the step (files/CLAUDE.md §3): /verify-otp still calls
+# _prefill_from_mobile exactly as it does in prod; only WHERE the profile data comes
+# from changes. Off by default — production and the existing demo (MOBILE_PAN_* creds
+# set, MOBILE_PAN_MOCK_MODE unset) are completely unaffected. Turn it on in a .env used
+# for testing to make EVERY mobile number (not just the one live-verified test number)
+# resolve instantly, with no network call, no vendor timeout/502 risk, no cost.
+#
+# A few keyed demo identities mirror the ones already used elsewhere in this repo (test
+# fixtures, mock_abha.py) so a mocked run stays internally consistent; ANY other 10-digit
+# number gets a clean synthetic profile deterministically derived from the number itself
+# (no RNG — reproducible across runs, same discipline as mock_abha.py's clean baseline).
+_MOCK_PROFILES: dict[str, dict] = {
+    "9739780007": {  # "Paulson" — mirrors mock_abha.py's diabetes+cardiac demo identity
+        "identity": {"name": "Paulson Varghese", "dob": "1974-06-12", "gender": "M",
+                     "panStatus": "ACTIVE", "aadhaarLinked": True,
+                     "address": {"buildingName": "12", "streetName": "MG Road",
+                                 "city": "Bengaluru", "state": "Karnataka", "pincode": "560001"}},
+        "pan": "BHYPM4927Q",
+        "litigation": {"totalCases": 10, "pendingCases": 1, "criminalCases": 10,
+                       "highSeverityCases": 10, "cases": []},
+    },
+    "8884609090": {  # "Sabarish" — clean demo identity
+        "identity": {"name": "Sabarish Kumar", "dob": "1990-03-14", "gender": "M",
+                     "panStatus": "ACTIVE", "aadhaarLinked": True,
+                     "address": {"buildingName": "45", "streetName": "Anna Salai",
+                                 "city": "Chennai", "state": "Tamil Nadu", "pincode": "600002"}},
+        "pan": "EKOPS9572K",
+    },
+}
+
+
+def mock_mode_enabled() -> bool:
+    return os.getenv("MOBILE_PAN_MOCK_MODE", "").strip().lower() in ("1", "true", "yes")
+
+
+def _synthetic_profile(mobile: str) -> dict:
+    """A deterministic, clean profile for a mobile number with no keyed identity —
+    lets literally ANY 10-digit number resolve instantly in mock mode, so the journey
+    can be tested end to end without hunting for a vendor-approved test number."""
+    digits = "".join(ch for ch in mobile if ch.isdigit())[-10:] or "0000000000"
+    # Synthetic PAN in valid-shape format, deterministic from the mobile digits (never a
+    # real allocated PAN — starts with ZZ, a series never issued to a real taxpayer).
+    pan = f"ZZ{digits[:3]}{'M'}{digits[3:7]}{'Z'}"
+    return {
+        "identity": {"name": f"Test Applicant {digits[-4:]}", "dob": "1992-01-01", "gender": "M",
+                     "panStatus": "ACTIVE", "aadhaarLinked": True,
+                     "address": {"buildingName": "1", "streetName": "Test Street",
+                                 "city": "Bengaluru", "state": "Karnataka", "pincode": "560001"}},
+        "pan": pan,
+    }
+
+
+def mock_profile_for(mobile: str) -> dict:
+    """The mock `data` block for a mobile number — a keyed demo identity if one
+    matches, else a synthetic-but-valid-shaped clean profile for any other number."""
+    digits = "".join(ch for ch in (mobile or "") if ch.isdigit())
+    if len(digits) > 10:
+        digits = digits[-10:]
+    return dict(_MOCK_PROFILES.get(digits) or _synthetic_profile(digits))
