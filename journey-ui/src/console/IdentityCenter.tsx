@@ -156,6 +156,7 @@ export function IdentityCenter({ snap, appId, onPrefilled, email, onEmailChange 
   // Employment block; a salaried+SE applicant (both) sees both stacked.
   const hasEpfo = !!(epfo.employer || epfo.uan)
   const hasGst = !!(gst.gstin || gst.gstin_count || (gst.status && gst.status !== "unavailable"))
+  const cancelledCount = (gst.statuses || []).filter(s => String(s).toUpperCase().includes("CANCEL")).length
   const showEmployment = hasEpfo || (!hasEpfo && !hasGst)  // salaried/unknown → employment; owner → hide
   const showBusiness = hasGst
 
@@ -216,8 +217,10 @@ export function IdentityCenter({ snap, appId, onPrefilled, email, onEmailChange 
                 : <Tag tone="ok"><SealCheck className="size-3" weight="fill" /> GST active</Tag>}
             </SectionHead>
             <div className="rounded-xl bg-[#faf9f7] px-4 py-1">
+              <FactRow k="Business name" v={gst.trade_name} />
               <FactRow k="GST status" v={gst.any_cancelled ? "Cancelled" : (gst.statuses?.[0] || gst.status)} />
               <FactRow k="GSTINs" v={gst.gstin_count ? String(gst.gstin_count) : undefined} />
+              {cancelledCount > 0 && <FactRow k="GSTINs cancelled" v={`${cancelledCount} of ${gst.gstin_count}`} />}
               <FactRow k="Turnover" v={gst.turnover_slab} />
               <FactRow k="Business since" v={gst.registration_date} />
               <FactRow k="Nature" v={gst.nature_of_business?.length ? gst.nature_of_business.join(", ") : undefined} />
@@ -265,20 +268,21 @@ export function IdentityCenter({ snap, appId, onPrefilled, email, onEmailChange 
             </div>
           )}
         </section>
-      </div>
 
-      {/* The ONE user-entered field — boxed input signals "editable" */}
-      <section>
-        <SectionHead icon={EnvelopeSimple} title="Your email">
-          <span className="text-xs text-muted-foreground">fraud &amp; contactability check</span>
-        </SectionHead>
-        <div className="max-w-md">
-          <input type="email" value={email} onChange={(e) => onEmailChange(e.target.value)}
-            placeholder="applicant@email.com"
-            className="w-full rounded-md border-2 bg-white px-3.5 h-11 text-sm outline-none focus:border-ring focus:ring-[3px] focus:ring-ring/30 transition-[color,box-shadow]" />
-          <p className="mt-1.5 text-xs text-muted-foreground">We use this to reach the applicant and run a fraud &amp; contactability check when you continue.</p>
-        </div>
-      </section>
+        {/* The ONE user-entered field — boxed input signals "editable". Placed right after
+            Aadhaar so both identity-verification actions sit together, for both personas. */}
+        <section>
+          <SectionHead icon={EnvelopeSimple} title="Your email">
+            <span className="text-xs text-muted-foreground">fraud &amp; contactability check</span>
+          </SectionHead>
+          <div className="max-w-md">
+            <input type="email" value={email} onChange={(e) => onEmailChange(e.target.value)}
+              placeholder="applicant@email.com"
+              className="w-full rounded-md border-2 bg-white px-3.5 h-11 text-sm outline-none focus:border-ring focus:ring-[3px] focus:ring-ring/30 transition-[color,box-shadow]" />
+            <p className="mt-1.5 text-xs text-muted-foreground">We use this to reach the applicant and run a fraud &amp; contactability check when you continue.</p>
+          </div>
+        </section>
+      </div>
     </div>
   )
 }
