@@ -10,7 +10,11 @@ from underwriting.rules import run_bre
 from underwriting.scoring import safety_score
 from underwriting.schemas import ProposalInput
 
-from .step_routes import _LEVEL, _RAIL_GROUPS, _group_has_data, _financial_context
+import time
+
+from .step_routes import (
+    _LEVEL, _RAIL_GROUPS, _group_has_data, _financial_context, _bank_statement_upload_view,
+)
 
 _SEED = {
     "proposal_id": "p", "meta": {"insurer": "acme", "received_at": "2026-08-11T00:00:00Z"},
@@ -82,7 +86,8 @@ def test_financial_context_shows_analysing_while_bank_statement_in_flight():
     # this synchronously before the background analysis runs) must show "Analysing…" on Avg
     # balance, not silently "—" — a refresh mid-analysis must be distinguishable from "never
     # uploaded" (the bug this covers: signals.account_aggregator only gets written on success).
-    b = {"signals": {}, "application": {}, "_journey": {"bank_statement_upload": {"status": "processing"}}}
+    b = {"signals": {}, "application": {},
+         "_journey": {"bank_statement_upload": {"status": "processing", "started_at": time.time()}}}
     rows = {r["label"]: r["value"] for r in _financial_context(b)}
     assert rows["Avg balance"] == "Analysing…"
 
@@ -95,6 +100,29 @@ def test_financial_context_shows_analysing_while_bank_statement_in_flight():
     b3 = {"signals": {}, "application": {}}
     rows3 = {r["label"]: r["value"] for r in _financial_context(b3)}
     assert rows3["Avg balance"] is None
+
+
+def test_stale_processing_marker_reads_as_error():
+    # Found live on GFF-99E1E8: a "processing" marker left behind by a dead background
+    # task (or clobbered by the pre-fix race) had NO way to ever resolve — no timeout, no
+    # cancel — so the UI spun forever. A marker older than the vendor client's own worst
+    # case (bank_statement.py: ~540s) can only mean the job died without erroring; the
+    # read-side view degrades it to "error" so the UI can offer a retry instead of hanging.
+    fresh = {"_journey": {"bank_statement_upload": {"status": "processing", "started_at": time.time() - 10}}}
+    assert _bank_statement_upload_view(fresh)["status"] == "processing"
+
+    stale = {"_journey": {"bank_statement_upload": {"status": "processing", "started_at": time.time() - 700}}}
+    view = _bank_statement_upload_view(stale)
+    assert view["status"] == "error" and view["message"]
+
+    # a "processing" marker with no started_at at all (shouldn't happen post-fix, but a
+    # marker written by an older deploy) must fail safe to error, not hang forever either
+    no_stamp = {"_journey": {"bank_statement_upload": {"status": "processing"}}}
+    assert _bank_statement_upload_view(no_stamp)["status"] == "error"
+
+    # done/error markers pass through untouched regardless of age
+    done = {"_journey": {"bank_statement_upload": {"status": "done"}}}
+    assert _bank_statement_upload_view(done) == {"status": "done"}
 
 
 def test_route_exists_and_gates_auth():
@@ -110,5 +138,6 @@ if __name__ == "__main__":
     test_litigation_lights_red_with_real_reason()
     test_rail_severity_matches_report_band_map()
     test_financial_context_shows_analysing_while_bank_statement_in_flight()
+    test_stale_processing_marker_reads_as_error()
     test_route_exists_and_gates_auth()
     print("rail tests OK")

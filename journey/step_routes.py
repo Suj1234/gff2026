@@ -613,7 +613,8 @@ async def upload_bank_statement(request: Request, background: BackgroundTasks,
 
         def mark_processing(bundle):
             bundle.setdefault("_journey", {})["bank_statement_upload"] = {
-                "status": "processing", "filename": getattr(upload, "filename", None)}
+                "status": "processing", "filename": getattr(upload, "filename", None),
+                "started_at": time.time()}
         _mutate_bundle(app, mark_processing)
         db.add(app)
         db.commit()
@@ -1488,6 +1489,26 @@ def _group_has_data(group_key: str, bundle: dict, step: int = 5) -> bool:
     return False
 
 
+# bank_statement.py's own worst case: SUBMIT_TIMEOUT(120) + POLL_MAX*POLL_INTERVAL(180)
+# + report()'s two tries * SUBMIT_TIMEOUT(240) ≈ 540s. A "processing" marker older than
+# this can ONLY mean the background task died without hitting its except block (process
+# restart, OOM-kill) — the marker is a UI convenience, not the job itself, so a dead
+# process can otherwise leave it stuck on "processing" forever with no future write ever
+# coming (found live on GFF-99E1E8: a stuck marker with no way to clear it — no timeout,
+# no cancel). Read-side staleness check, not a background sweeper: no extra process, and
+# it only needs to be right at the moment someone's looking.
+_BANK_STATEMENT_STALE_SECONDS = 600
+
+
+def _bank_statement_upload_view(bundle: dict) -> dict:
+    marker = (bundle.get("_journey", {}) or {}).get("bank_statement_upload", {}) or {}
+    if marker.get("status") == "processing":
+        age = time.time() - (marker.get("started_at") or 0)
+        if age > _BANK_STATEMENT_STALE_SECONDS:
+            return {"status": "error", "message": "Analysis timed out — try uploading again."}
+    return marker
+
+
 @router.get("/app/{app_id}")
 def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -> dict:
     """Read-only snapshot for the React console: the fetched applicant + KYC signals so
@@ -1527,7 +1548,7 @@ def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -
         # in-progress/completed thread state per bucket, so the chat UI can resume on
         # revisit instead of restarting the conversation from scratch.
         "health_agent": (bundle.get("_journey", {}) or {}).get("health_agent", {}) or {},
-        "bank_statement_upload": (bundle.get("_journey", {}) or {}).get("bank_statement_upload", {}) or {},
+        "bank_statement_upload": _bank_statement_upload_view(bundle),
     }
 
 
@@ -1689,7 +1710,7 @@ def _financial_context(bundle: dict) -> list[dict]:
     # A bank statement upload in flight (journey._journey.bank_statement_upload, set
     # synchronously on POST /bank-statement) — show "Analysing…" on Avg balance instead of
     # "—" so the rail reflects an outstanding source, not an unrequested one.
-    bs_processing = (bundle.get("_journey", {}) or {}).get("bank_statement_upload", {}).get("status") == "processing"
+    bs_processing = _bank_statement_upload_view(bundle).get("status") == "processing"
     rows = [
         {"label": "GST turnover", "value": gst.get("turnover_slab")},
         {"label": "Assets", "value": vehicle.get("model") or vehicle.get("registration")

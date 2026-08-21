@@ -98,19 +98,26 @@ function BankStatement({ appId, snap, declared }: { appId: number | null; snap: 
   const [fileName, setFileName] = useState<string>(upl?.filename || "")
   const [msg, setMsg] = useState<string>(upl?.status === "error" ? (upl.message || "Analysis failed — you can proceed.") : "")
   const inputRef = useRef<HTMLInputElement>(null)
+  // Bumped on cancel so an in-flight pollUntilDone loop stops updating state after the
+  // user has already bailed out — otherwise a stale poll landing later could flip a
+  // freshly-idle widget back to "done"/"error" from the upload the user just abandoned.
+  const pollGen = useRef(0)
 
   // Budget must cover the vendor client's OWN worst case (bank_statement.py: up to ~180s
   // polling + submit/report calls), not just its typical ~40s — else the UI gives up on a
   // background job that's still running and will land a moment later. 4s × 55 ≈ 220s.
-  async function pollUntilDone() {
+  async function pollUntilDone(gen: number) {
     for (let i = 0; i < 55; i++) {
       await new Promise((res) => setTimeout(res, 4000))
+      if (pollGen.current !== gen) return   // cancelled — a newer attempt (or a bail-out) superseded this one
       const s = await fetch(`/api/journey/app/${appId}`).then((x) => x.json()).catch(() => null)
+      if (pollGen.current !== gen) return
       const aa = s?.signals?.account_aggregator
       if (aa?.status === "available") { setState("done"); return }
       const u = s?.bank_statement_upload
       if (u?.status === "error") { setState("error"); setMsg(u.message || "Analysis failed — you can proceed."); return }
     }
+    if (pollGen.current !== gen) return
     // Timed out waiting — the analysis may still complete; the rail will reflect it. Not a hard fail.
     setState("error"); setMsg("Still analysing — you can proceed; income will be corroborated shortly.")
   }
@@ -118,12 +125,13 @@ function BankStatement({ appId, snap, declared }: { appId: number | null; snap: 
   // Resume watching a still-in-flight upload after a refresh (mount-only: the initial
   // render already decided `initial === "uploading"` from server state).
   useEffect(() => {
-    if (initial === "uploading") pollUntilDone()
+    if (initial === "uploading") pollUntilDone(pollGen.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function upload(file: File) {
     if (appId == null) return
+    const gen = ++pollGen.current
     setFileName(file.name); setState("uploading"); setMsg("")
     const body = new FormData()
     body.append("app_id", String(appId))
@@ -133,9 +141,19 @@ function BankStatement({ appId, snap, declared }: { appId: number | null; snap: 
       // poll the app snapshot until account_aggregator lands (or the job reports error).
       const r = await fetch("/api/journey/bank-statement", { method: "POST", body })
       const d = await r.json()
+      if (pollGen.current !== gen) return
       if (!d.success) { setState("error"); setMsg(d.message || "Upload failed — you can proceed."); return }
-      await pollUntilDone()
-    } catch { setState("error"); setMsg("Upload failed — you can proceed; income can be corroborated later.") }
+      await pollUntilDone(gen)
+    } catch { if (pollGen.current === gen) { setState("error"); setMsg("Upload failed — you can proceed; income can be corroborated later.") } }
+  }
+
+  // Bail out of a stuck/unwanted "uploading" state so the user is never trapped staring
+  // at a spinner with no way forward (found live: a marker left stuck on "processing"
+  // with no cancel path — journey/step_routes.py's own staleness check now backstops
+  // this server-side too, but a fast local escape hatch matters more to the user).
+  function cancel() {
+    pollGen.current++    // invalidate any in-flight poll so it can't resurrect this state
+    setState("idle"); setMsg(""); setFileName("")
   }
 
   return (
@@ -168,13 +186,21 @@ function BankStatement({ appId, snap, declared }: { appId: number | null; snap: 
               {state === "error" && (
                 <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-amber-700"><Warning weight="fill" className="size-3.5 shrink-0" /> {msg}</p>
               )}
-              <button type="button" disabled={state === "uploading"}
-                onClick={() => inputRef.current?.click()}
-                className="mt-2.5 inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground text-[13px] font-medium px-4 h-9 hover:bg-primary/90 transition-colors disabled:opacity-60">
-                {state === "uploading"
-                  ? (<><Spinner weight="bold" className="size-4 animate-spin" /> Analysing…</>)
-                  : (state === "error" ? "Try another file" : "Upload statement")}
-              </button>
+              <div className="mt-2.5 flex items-center gap-3">
+                <button type="button" disabled={state === "uploading"}
+                  onClick={() => inputRef.current?.click()}
+                  className="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground text-[13px] font-medium px-4 h-9 hover:bg-primary/90 transition-colors disabled:opacity-60">
+                  {state === "uploading"
+                    ? (<><Spinner weight="bold" className="size-4 animate-spin" /> Analysing…</>)
+                    : (state === "error" ? "Try another file" : "Upload statement")}
+                </button>
+                {state === "uploading" && (
+                  <button type="button" onClick={cancel}
+                    className="text-[12px] font-semibold text-muted-foreground hover:text-foreground hover:underline">
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
