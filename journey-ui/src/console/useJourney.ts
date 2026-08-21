@@ -63,6 +63,7 @@ export type AppSnapshot = {
   product?: Product
   health_declaration?: Record<string, unknown>   // Step 4 pre-fill on revisit (flat payload)
   health_agent?: HealthAgentState                 // Step 4 conversational deep-dive state
+  bank_statement_upload?: { status?: "processing" | "done" | "error"; filename?: string; message?: string }
   status?: string
   signals: Signals
   seeded?: boolean

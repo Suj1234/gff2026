@@ -499,7 +499,13 @@ def _analyze_bank_statement_bg(app_id: int, tmp_path: str) -> None:
     """Run the iAdore analysis OUT of the request cycle (it takes ~40s — too long to hold an
     HTTP connection open behind the proxy, which cuts it at ~20-30s → the browser saw
     'Upload failed' while the backend actually succeeded). Own DB session (the request's is
-    long closed), own temp-file cleanup. Idempotent: re-running just overwrites the result."""
+    long closed), own temp-file cleanup. Idempotent: re-running just overwrites the result.
+
+    `_journey.bank_statement_upload` is a UI-only progress marker (never reaches
+    ProposalInput — `_journey` is stripped before parsing, journey/step_routes.py raw.pop):
+    set "processing" before the call so a page refresh mid-analysis can tell "still working"
+    apart from "never uploaded" (both look identical via signals.account_aggregator alone,
+    since that key only ever gets WRITTEN on success, never on start)."""
     t0 = time.time()
     try:
         import bank_statement as iadore  # repo-root client (real 3-call flow)
@@ -517,6 +523,7 @@ def _analyze_bank_statement_bg(app_id: int, tmp_path: str) -> None:
             def add(bundle):
                 bundle.setdefault("signals", {})["account_aggregator"] = aa
                 bundle.setdefault("follow_up_observations", {})["bank_statement"] = follow
+                bundle.setdefault("_journey", {})["bank_statement_upload"] = {"status": "done"}
             _mutate_bundle(app, add)
             s.add(app)
             track_api_call(s, provider="iadore", endpoint="submit+poll+report", mode="real",
@@ -526,6 +533,13 @@ def _analyze_bank_statement_bg(app_id: int, tmp_path: str) -> None:
                         detail={"imputed_income": aa.get("imputed_annual_income")})
     except Exception as e:
         with session_scope() as s:
+            app = s.get(Application, app_id)
+            if app is not None:
+                def mark_error(bundle):
+                    bundle.setdefault("_journey", {})["bank_statement_upload"] = {
+                        "status": "error", "message": str(e)[:200]}
+                _mutate_bundle(app, mark_error)
+                s.add(app)
             track_api_call(s, provider="iadore", endpoint="submit+poll+report", mode="real",
                            application_id=app_id, ok=False, latency_ms=int((time.time()-t0)*1000),
                            error=str(e)[:200])
@@ -571,6 +585,12 @@ async def upload_bank_statement(request: Request, background: BackgroundTasks,
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp.write(data)
     tmp.close()
+
+    def mark_processing(bundle):
+        bundle.setdefault("_journey", {})["bank_statement_upload"] = {
+            "status": "processing", "filename": getattr(upload, "filename", None)}
+    _mutate_bundle(app, mark_processing)
+    db.add(app)
 
     background.add_task(_analyze_bank_statement_bg, app.id, tmp.name)
     return {"success": True, "status": "processing",
@@ -1481,6 +1501,7 @@ def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -
         # in-progress/completed thread state per bucket, so the chat UI can resume on
         # revisit instead of restarting the conversation from scratch.
         "health_agent": (bundle.get("_journey", {}) or {}).get("health_agent", {}) or {},
+        "bank_statement_upload": (bundle.get("_journey", {}) or {}).get("bank_statement_upload", {}) or {},
     }
 
 
@@ -1639,11 +1660,15 @@ def _financial_context(bundle: dict) -> list[dict]:
     # standalone imputed/declared rows. All ₹ values are short words (₹50 L / ₹2.18 Cr).
     balance = aa.get("avg_monthly_balance")
     e2i = aa.get("expense_to_income")            # 0.0 is a real value ("0% obligations"), not absent
+    # A bank statement upload in flight (journey._journey.bank_statement_upload, set
+    # synchronously on POST /bank-statement) — show "Analysing…" on Avg balance instead of
+    # "—" so the rail reflects an outstanding source, not an unrequested one.
+    bs_processing = (bundle.get("_journey", {}) or {}).get("bank_statement_upload", {}).get("status") == "processing"
     rows = [
         {"label": "GST turnover", "value": gst.get("turnover_slab")},
         {"label": "Assets", "value": vehicle.get("model") or vehicle.get("registration")
                                      or aa.get("physical_assets")},
-        {"label": "Avg balance", "value": _inr(balance)},
+        {"label": "Avg balance", "value": _inr(balance) or ("Analysing…" if bs_processing else None)},
         {"label": "Obligations", "value": (f"{e2i*100:.0f}% of income"
                                            if isinstance(e2i, (int, float)) else None)},
     ]

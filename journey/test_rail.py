@@ -10,7 +10,7 @@ from underwriting.rules import run_bre
 from underwriting.scoring import safety_score
 from underwriting.schemas import ProposalInput
 
-from .step_routes import _LEVEL, _RAIL_GROUPS, _group_has_data
+from .step_routes import _LEVEL, _RAIL_GROUPS, _group_has_data, _financial_context
 
 _SEED = {
     "proposal_id": "p", "meta": {"insurer": "acme", "received_at": "2026-08-11T00:00:00Z"},
@@ -77,6 +77,26 @@ def test_step_scoping_map_is_sane():
     assert not ({"financial", "medical", "lifestyle"} & set(_STEP_GROUPS[1]))
 
 
+def test_financial_context_shows_analysing_while_bank_statement_in_flight():
+    # A bank-statement upload in progress (journey/step_routes.py POST /bank-statement sets
+    # this synchronously before the background analysis runs) must show "Analysing…" on Avg
+    # balance, not silently "—" — a refresh mid-analysis must be distinguishable from "never
+    # uploaded" (the bug this covers: signals.account_aggregator only gets written on success).
+    b = {"signals": {}, "application": {}, "_journey": {"bank_statement_upload": {"status": "processing"}}}
+    rows = {r["label"]: r["value"] for r in _financial_context(b)}
+    assert rows["Avg balance"] == "Analysing…"
+
+    # once the real signal lands, it wins over the in-flight marker
+    b2 = {**b, "signals": {"account_aggregator": {"status": "available", "avg_monthly_balance": 50_000}}}
+    rows2 = {r["label"]: r["value"] for r in _financial_context(b2)}
+    assert rows2["Avg balance"] != "Analysing…" and "50,000" in rows2["Avg balance"]
+
+    # no upload at all -> plain absent, not "Analysing…"
+    b3 = {"signals": {}, "application": {}}
+    rows3 = {r["label"]: r["value"] for r in _financial_context(b3)}
+    assert rows3["Avg balance"] is None
+
+
 def test_route_exists_and_gates_auth():
     from starlette.testclient import TestClient
     from underwriting.api import app
@@ -89,5 +109,6 @@ if __name__ == "__main__":
     test_empty_bundle_is_all_idle_not_green()
     test_litigation_lights_red_with_real_reason()
     test_rail_severity_matches_report_band_map()
+    test_financial_context_shows_analysing_while_bank_statement_in_flight()
     test_route_exists_and_gates_auth()
     print("rail tests OK")
