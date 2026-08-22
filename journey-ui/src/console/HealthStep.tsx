@@ -762,19 +762,21 @@ function FaceScan({ appId, snap, reload }: { appId: number | null; snap: AppSnap
   // Demo escape hatch: Shift+D — from the moment the QR is up (waiting for the applicant's
   // phone) or after a failure — fills the SAME clean-vitals mock the backend uses when
   // NURALX_BASE_URL is unset, so a slow/unreachable live vendor never blocks the demo.
-  // Client-side only — no network round-trip.
+  // Persisted server-side (POST /face-scan/demo-fill) + reload() so the result survives
+  // navigating away and back — it used to be client-only state and reset on remount.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.shiftKey && e.key.toLowerCase() === "d" && (state === "waiting" || state === "error")) {
+      if (e.shiftKey && e.key.toLowerCase() === "d" && (state === "waiting" || state === "error") && appId != null) {
         setRppg(DEMO_MOCK_RPPG)
         setLiveness({ status: "available", liveness_pass: true, liveness_score: 0.96, face_match_score: 0.94, deepfake_flag: false })
         setState("done")
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+        fetch(`/api/journey/face-scan/demo-fill/${appId}`, { method: "POST" }).then(reload).catch(() => {})
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [state])
+  }, [state, appId])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll the app snapshot for the webhook to land vitals (real NuralX is async); the mock
   // path fills them synchronously so the first poll already sees them.

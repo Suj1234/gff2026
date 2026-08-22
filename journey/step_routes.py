@@ -847,6 +847,20 @@ def face_scan_start(app_id: int, request: Request, db: Session = Depends(get_ses
     return {"success": True, "mode": "real", "scan_url": f"{_frontend_url()}/face-scan/{token}"}
 
 
+@router.post("/face-scan/demo-fill/{app_id}")
+def face_scan_demo_fill(app_id: int, request: Request, db: Session = Depends(get_session)) -> dict:
+    """Demo escape hatch (Shift+D on the waiting/error face-scan screen): persists the same
+    clean-vitals mock _merge_mock_vitals injects when NuralX isn't configured, so a slow/
+    unreachable live vendor never blocks the demo AND the result survives navigating away
+    and back (previously client-side only, lost on remount)."""
+    app = _require_app(request, app_id, db)
+    if app is None:
+        return {"success": False, "message": "unauthorized"}
+    _merge_mock_vitals(db, app)
+    db.add(app)
+    return {"success": True}
+
+
 @router.get("/face-scan/{token}/status")
 def face_scan_status_get(token: str, db: Session = Depends(get_session)) -> dict:
     """PUBLIC — the mobile page polls this (it isn't logged into the desktop session)."""
