@@ -664,7 +664,7 @@ def _analyze_prescription_bg(app_id: int, tmp_path: str) -> None:
         from underwriting.sources.prescription_ocr import to_prescription_ocr
         raw = extract(tmp_path)
         adapted = to_prescription_ocr(raw)
-        with session_scope() as s:
+        with _app_lock(app_id), session_scope() as s:
             app = s.get(Application, app_id)
             if app is None:
                 return
@@ -681,7 +681,7 @@ def _analyze_prescription_bg(app_id: int, tmp_path: str) -> None:
             track_event(s, event_type="prescription_ocr_analyzed", application_id=app_id,
                         detail={"n_drugs": len(adapted.get("drug_names", []))})
     except Exception as e:
-        with session_scope() as s:
+        with _app_lock(app_id), session_scope() as s:
             track_api_call(s, provider="gemini_ocr", endpoint="prescription", mode="real",
                            application_id=app_id, ok=False, latency_ms=int((time.time()-t0)*1000),
                            error=str(e)[:200])
