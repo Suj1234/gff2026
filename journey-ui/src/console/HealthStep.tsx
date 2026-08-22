@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react"
+﻿import { useEffect, useRef, useState } from "react"
 import QRCode from "qrcode"
+import { Tooltip } from "radix-ui"
 import type { AppSnapshot } from "./useJourney"
 import {
-  Check, Spinner, SealCheck, Warning, QrCode, Copy,
+  Check, Spinner, SealCheck, Warning, QrCode, Copy, Info,
   Pulse, Heartbeat, Wind, Drop, FirstAid, X, Plus, UploadSimple, CaretDown,
 } from "@phosphor-icons/react"
 import { Modal } from "./Modal"
@@ -553,6 +554,22 @@ function FamilyDetail({
 type Rppg = AppSnapshot["signals"]["rppg_scan"]
 type ScanState = "idle" | "starting" | "waiting" | "done" | "error"
 
+// Mirrors the backend's mock (journey/step_routes.py _merge_mock_vitals) so Shift+D and
+// the no-vendor-configured path show the same clean-vitals numbers.
+const DEMO_MOCK_RPPG: Rppg = {
+  status: "available", consented: true,
+  vitals: { heart_rate: 74, respiratory_rate: 16, spo2: 98, bp: { systolic: 118, diastolic: 76 } },
+  vitals_extra: {
+    map: 90, pulse_pressure: 42, cardiac_workload: 3.2, prq: 3.4,
+    hemoglobin: 14.2, hba1c: 5.4,
+    stress_index: 42, stress_level: 1, stress_index_norm: 12,
+    wellness_index: 7, wellness_level: 3,
+    sdnn: 58, rmssd: 44, mean_rri: 812, lf_hf: 1.6, sd1: 31, sd2: 83,
+    pns_index: 0.4, sns_index: -0.2, pns_zone: 2, sns_zone: 2,
+    risk_high_bp: 0, risk_hba1c: 0, risk_glucose: 0, risk_cholesterol: 0, risk_low_hemoglobin: 0,
+  },
+}
+
 const bpText = (bp: unknown): string => {
   if (bp && typeof bp === "object") {
     const o = bp as { systolic?: number; diastolic?: number }
@@ -563,12 +580,130 @@ const bpText = (bp: unknown): string => {
 const n0 = (v?: number) => (v != null ? String(Math.round(v)) : "—")
 const n1 = (v?: number) => (v != null ? (Math.round(v * 100) / 100).toString() : "—")
 
-// vendor risk flags: 0 none · 1 low · 2 moderate · 3 high (display only, never a decision).
-const RISK_BAND = ["No risk", "Low", "Moderate", "High"] as const
-const riskTone = (v?: number): "ok" | "warn" | "bad" => (v == null || v <= 0 ? "ok" : v === 1 ? "ok" : v === 2 ? "warn" : "bad")
-// NuralX categorical levels (1-based indices from the vendor)
+// Plain-language explanations, one per parameter — reworded from
+// docs/Vital Signs and Health Indicators Information.pdf, no medical jargon.
+const INFO: Record<string, string> = {
+  heart_rate: "How many times your heart beats per minute. Normal at rest is 60-100.",
+  respiratory_rate: "How many breaths you take per minute. Normal at rest is 12-20.",
+  spo2: "How much oxygen your blood is carrying from your lungs. Normal is 95-100%.",
+  bp: "The force of blood pushing on your artery walls — two numbers: pressure while the heart beats (top) and while it rests (bottom).",
+  map: "The average blood pressure over one full heartbeat — tells us if organs are getting enough blood.",
+  pulse_pressure: "The gap between your top and bottom blood pressure numbers — reflects how flexible your arteries are.",
+  cardiac_workload: "How hard your heart is working right now to pump blood — lower is more efficient.",
+  prq: "How well your heart and lungs are working together. Normal is about 5.",
+  hemoglobin: "The protein in blood that carries oxygen around your body.",
+  hba1c: "Your average blood sugar level over the last 2-3 months.",
+  stress_index: "A number reflecting how your body is handling challenges right now, based on heartbeat patterns.",
+  stress_level: "A simple Low-to-Very High read of your current stress, based on the stress index.",
+  wellness_index: "An overall score (0-10) estimating your cardiovascular wellness from this scan alone.",
+  wellness_level: "The vendor's own internal wellness reading — shown as-is; no plain-language scale confirmed yet.",
+  sdnn: "How much your heartbeat timing naturally varies — higher usually means better fitness and stress resilience.",
+  rmssd: "A measure of beat-to-beat heartbeat variation — higher can mean you're well-rested, lower can mean stress or fatigue.",
+  mean_rri: "The average time between heartbeats, in milliseconds.",
+  sd1: "A short-term heartbeat-variation measure, used to gauge your body's recovery ability.",
+  sd2: "A longer-term heartbeat-variation measure, used to gauge your body's stress response.",
+  lf_hf: "The balance between your body's 'rest' and 'stress' nervous systems. Normal is roughly 0.27-0.38.",
+  pns_index: "How well your body can relax and recover after stress.",
+  sns_index: "How ready your body is to react to a stressful or demanding situation.",
+  pns_zone: "Recovery ability, in three bands: Low, Normal, or High.",
+  sns_zone: "Stress response readiness, in three bands: Low, Normal, or High.",
+  risk_high_bp: "Whether your blood pressure reading is above a healthy threshold.",
+  risk_hba1c: "Whether your average blood sugar reading is above a healthy threshold.",
+  risk_glucose: "Whether your fasting blood sugar reading is above a healthy threshold (only valid if you fasted 8-12 hours first).",
+  risk_cholesterol: "Whether your estimated cholesterol is above a healthy threshold.",
+  risk_low_hemoglobin: "Whether your hemoglobin reading is below a healthy threshold.",
+}
+
+function InfoTip({ text }: { text: string }) {
+  return (
+    <Tooltip.Provider delayDuration={200}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button type="button" onClick={(e) => e.stopPropagation()} aria-label="What is this?"
+            className="text-muted-foreground/60 hover:text-primary transition-colors">
+            <Info weight="regular" className="size-3" />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content side="top" align="start" sideOffset={6}
+            className="max-w-[240px] rounded-md bg-foreground text-background text-[11.5px] leading-snug px-2.5 py-2 shadow-lg z-50">
+            {text}
+            <Tooltip.Arrow className="fill-foreground" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  )
+}
+
+// The ~10 parameters with a vendor-defined normal/abnormal band (Assessment-Guidelines.pdf).
+// Everything else has no vendor-confirmed range, so it stays a plain value tile rather than
+// inventing thresholds. `band(value, gender?)` returns the vendor's own wording + tone.
+type Band = { word: string; tone: "ok" | "warn" | "bad" }
+const RICH_BANDS: Record<string, { ref: string; band: (v: number, gender?: string) => Band | null }> = {
+  heart_rate: {
+    ref: "60-100 bpm",
+    band: (v) => (v > 100 ? { word: "High", tone: "bad" } : v < 60 ? { word: "Low", tone: "warn" } : { word: "Normal", tone: "ok" }),
+  },
+  respiratory_rate: {
+    ref: "12-20 br/min",
+    band: (v) => (v > 20 ? { word: "High", tone: "bad" } : v < 12 ? { word: "Low", tone: "warn" } : { word: "Normal", tone: "ok" }),
+  },
+  spo2: {
+    ref: "95-100%",
+    band: (v) => (v < 95 ? { word: "Low", tone: "bad" } : { word: "Normal", tone: "ok" }),
+  },
+  sdnn: {
+    ref: ">50 ms",
+    band: (v) => (v < 50 ? { word: "Low", tone: "warn" } : { word: "Normal", tone: "ok" }),
+  },
+  stress_index: {
+    ref: "0-80 Low · 81-150 Normal · 151-300 Mild · 301-600 High · >600 Very High",
+    band: (v) =>
+      v <= 80 ? { word: "Low", tone: "ok" } : v <= 150 ? { word: "Normal", tone: "ok" }
+      : v <= 300 ? { word: "Mild", tone: "warn" } : v <= 600 ? { word: "High", tone: "bad" } : { word: "Very High", tone: "bad" },
+  },
+  pns_zone: {
+    ref: "1-Low · 2-Normal · 3-High",
+    band: (v) => (v <= 1 ? { word: "Low", tone: "warn" } : v === 2 ? { word: "Normal", tone: "ok" } : { word: "High", tone: "ok" }),
+  },
+  sns_zone: {
+    ref: "1-Low · 2-Normal · 3-High",
+    band: (v) => (v >= 3 ? { word: "High", tone: "bad" } : v === 2 ? { word: "Normal", tone: "ok" } : { word: "Low", tone: "ok" }),
+  },
+  hemoglobin: {
+    ref: "Female 12-16 · Male 14-18 g/dL",
+    band: (v, gender) => {
+      const [lo, hi] = gender === "male" ? [14, 18] : gender === "female" ? [12, 16] : [null, null]
+      if (lo == null) return null // gender unknown — no vendor band to apply
+      return v < lo ? { word: "Low", tone: "bad" } : v > hi! ? { word: "High", tone: "warn" } : { word: "Normal", tone: "ok" }
+    },
+  },
+}
+// Blood pressure is banded on systolic only (Assessment-Guidelines.pdf #6).
+const bpBand = (systolic?: number): Band | null =>
+  systolic == null ? null
+  : systolic >= 130 ? { word: "High", tone: "bad" } : systolic < 90 ? { word: "Low", tone: "warn" } : { word: "Normal", tone: "ok" }
+
+function toneClass(tone: "ok" | "warn" | "bad") {
+  return tone === "ok" ? "stat-ok" : tone === "warn" ? "stat-warn" : "stat-bad"
+}
+
+// Vendor risk flags (Assessment-Guidelines.pdf #10): EXACTLY 1-Low, 2-Medium, 3-High —
+// display only, never a decision. No "0 = no risk" tier exists in the vendor spec.
+const RISK_BAND: Record<number, string> = { 1: "Low", 2: "Medium", 3: "High" }
+const riskTone = (v?: number): "ok" | "warn" | "bad" => (v === 1 ? "ok" : v === 2 ? "warn" : v === 3 ? "bad" : "ok")
+// NuralX categorical Stress Level (1-based, vendor-confirmed wording — Vital Signs doc)
 const STRESS_LABEL = ["", "Low", "Normal", "Mild", "High", "Very high"]
-const WELLNESS_LABEL = ["", "Poor", "Fair", "Good", "Very good", "Excellent"]
+// Wellness Score band (wellness_index 0-10, Assessment-Guidelines / Vital Signs docs):
+// Low 1-3, Medium 4-7, High 8-10. wellness_level has NO vendor-defined wording — shown
+// as a plain number, never a fabricated word (there was no "Poor/Fair/Good..." scale).
+const wellnessBand = (v?: number): "Low" | "Medium" | "High" | null =>
+  v == null ? null : v <= 3 ? "Low" : v <= 7 ? "Medium" : "High"
+const wellnessTone = (v?: number): "ok" | "warn" | "bad" => {
+  const b = wellnessBand(v)
+  return b === "High" ? "ok" : b === "Medium" ? "warn" : "bad"
+}
 
 // Inline SVG sparkline for the RR-interval series (no chart lib — a demo tachogram).
 function Sparkline({ series }: { series: number[] }) {
@@ -613,6 +748,22 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
     QRCode.toDataURL(scanUrl, { width: 176, margin: 1 }).then(setQrDataUrl).catch(() => setQrDataUrl(""))
   }, [scanUrl])
 
+  // Demo escape hatch: Shift+D while the scan has failed fills the SAME clean-vitals mock
+  // the backend uses when NURALX_BASE_URL is unset, so a live-vendor hiccup mid-demo
+  // doesn't block the rest of the walkthrough. Client-side only — no network round-trip.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.shiftKey && e.key.toLowerCase() === "d" && state === "error") {
+        setRppg(DEMO_MOCK_RPPG)
+        setLiveness({ status: "available", liveness_pass: true, liveness_score: 0.96, face_match_score: 0.94, deepfake_flag: false })
+        setState("done")
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [state])
+
   // Poll the app snapshot for the webhook to land vitals (real NuralX is async); the mock
   // path fills them synchronously so the first poll already sees them.
   async function pollVitals() {
@@ -644,7 +795,9 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
 
   const v = rppg?.vitals ?? {}
   const x = rppg?.vitals_extra ?? {}
+  const gender = snap.applicant?.gender
   const livenessFailed = liveness?.liveness_pass === false || liveness?.deepfake_flag === true
+  const wellnessScoreBand = wellnessBand(x.wellness_index)
 
   return (
     <section>
@@ -676,56 +829,102 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
 
             {expanded && (
               <>
-                {/* CARDIOVASCULAR — the four R-017 reads + derived pressures. Every tile
-                    always renders (n0/n1/bpText already fall back to "—" when absent) so
-                    the panel shows the full ~30-parameter set NuralX can return, not just
-                    whatever happened to come back on this scan. */}
-                <VitalGrid title="Cardiovascular">
-                  <VitalTile icon={Heartbeat} label="Heart rate" value={n0(v.heart_rate)} unit="bpm" />
-                  <VitalTile icon={Wind} label="Respiratory" value={n0(v.respiratory_rate)} unit="/min" />
-                  <VitalTile icon={Drop} label="SpO₂" value={n0(v.spo2)} unit="%" />
-                  <VitalTile icon={Pulse} label="Blood pressure" value={bpText(v.bp)} unit="mmHg" />
-                  <VitalTile icon={Heartbeat} label="Mean art. pr." value={n0(x.map)} unit="mmHg" />
-                  <VitalTile icon={Heartbeat} label="Pulse pressure" value={n0(x.pulse_pressure)} unit="mmHg" />
-                  <VitalTile icon={Heartbeat} label="Cardiac load" value={n1(x.cardiac_workload)} unit="" />
-                  <VitalTile icon={Pulse} label="PRQ" value={n1(x.prq)} unit="" />
+                {/* WELLNESS SCORE — the vendor's headline metric, leads the report
+                    (Vital Signs doc: 0-10, Low 1-3/Medium 4-7/High 8-10). wellness_level
+                    has no vendor-confirmed wording, shown as a bare number only. */}
+                <div className="rounded-lg border border-border bg-[#faf9f7] px-4 py-3 flex items-center gap-4">
+                  <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.07em] font-semibold text-muted-foreground">
+                    Wellness score <InfoTip text={INFO.wellness_index} />
+                  </div>
+                  <span className="text-[22px] font-bold tabular-nums">{n0(x.wellness_index)}<span className="text-[12px] text-muted-foreground font-normal">/10</span></span>
+                  {wellnessScoreBand && (
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${toneClass(wellnessTone(x.wellness_index))}`}>
+                      {wellnessScoreBand}
+                    </span>
+                  )}
+                  <span className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    Wellness level (vendor scale): <span className="font-semibold text-foreground">{n0(x.wellness_level)}</span>
+                    <InfoTip text={INFO.wellness_level} />
+                  </span>
+                </div>
+
+                {/* BASIC VITAL SIGNS — vendor doc order; the ~6 with a defined band get
+                    the full pill+sentence+ref tile, the rest stay simple value tiles. */}
+                <VitalGrid title="Basic vital signs">
+                  <RichVitalTile icon={Heartbeat} label="Heart rate" infoKey="heart_rate"
+                    display={n0(v.heart_rate)} unit="bpm"
+                    ref={RICH_BANDS.heart_rate.ref} band={v.heart_rate != null ? RICH_BANDS.heart_rate.band(v.heart_rate) : null} />
+                  <RichVitalTile icon={Wind} label="Breathing rate" infoKey="respiratory_rate"
+                    display={n0(v.respiratory_rate)} unit="br/min"
+                    ref={RICH_BANDS.respiratory_rate.ref} band={v.respiratory_rate != null ? RICH_BANDS.respiratory_rate.band(v.respiratory_rate) : null} />
+                  <RichVitalTile icon={Drop} label="Oxygen saturation" infoKey="spo2"
+                    display={n0(v.spo2)} unit="%"
+                    ref={RICH_BANDS.spo2.ref} band={v.spo2 != null ? RICH_BANDS.spo2.band(v.spo2) : null} />
+                  <RichVitalTile icon={Pulse} label="Blood pressure" infoKey="bp"
+                    display={bpText(v.bp)} unit="mmHg"
+                    ref="Sys 90-130 mmHg"
+                    band={bpBand(typeof v.bp === "object" && v.bp ? (v.bp as { systolic?: number }).systolic : undefined)} />
+                  <VitalTile icon={Heartbeat} label="Mean art. pr." infoKey="map" value={n0(x.map)} unit="mmHg" />
+                  <VitalTile icon={Heartbeat} label="Pulse pressure" infoKey="pulse_pressure" value={n0(x.pulse_pressure)} unit="mmHg" />
+                  <VitalTile icon={Heartbeat} label="Cardiac load" infoKey="cardiac_workload" value={n1(x.cardiac_workload)} unit="" />
+                  <VitalTile icon={Pulse} label="PRQ" infoKey="prq" value={n1(x.prq)} unit="" />
                 </VitalGrid>
 
-                {/* METABOLIC — HbA1c / hemoglobin (screening estimates) */}
-                <VitalGrid title="Metabolic" sub="Screening estimates · not underwriting inputs">
-                  <VitalTile icon={Drop} label="Hemoglobin" value={n1(x.hemoglobin)} unit="g/dL" />
-                  <VitalTile icon={Pulse} label="HbA1c" value={n1(x.hba1c)} unit="%" />
+                {/* BLOODLESS BLOOD TESTS — under-research per the vendor doc */}
+                <VitalGrid title="Bloodless blood tests" sub="Under research · screening estimates only">
+                  <RichVitalTile icon={Drop} label="Hemoglobin" infoKey="hemoglobin"
+                    display={n1(x.hemoglobin)} unit="g/dL"
+                    ref={RICH_BANDS.hemoglobin.ref} band={x.hemoglobin != null ? RICH_BANDS.hemoglobin.band(x.hemoglobin, gender) : null} />
+                  <VitalTile icon={Pulse} label="HbA1c" infoKey="hba1c" value={n1(x.hba1c)} unit="%" />
                 </VitalGrid>
 
-                {/* HRV / AUTONOMIC — the full heart-rate-variability + stress/wellness set */}
-                <VitalGrid title="HRV & autonomic balance" sub="Wellness estimates only">
-                  <VitalTile icon={Pulse} label="SDNN" value={n0(x.sdnn)} unit="ms" />
-                  <VitalTile icon={Pulse} label="RMSSD" value={n0(x.rmssd)} unit="ms" />
-                  <VitalTile icon={Pulse} label="Mean RRI" value={n0(x.mean_rri)} unit="ms" />
-                  <VitalTile icon={Pulse} label="SD1" value={n0(x.sd1)} unit="ms" />
-                  <VitalTile icon={Pulse} label="SD2" value={n0(x.sd2)} unit="ms" />
-                  <VitalTile icon={Pulse} label="LF/HF" value={n1(x.lf_hf)} unit="" />
-                  <VitalTile icon={Heartbeat} label="PNS index" value={n1(x.pns_index)} unit={x.pns_zone != null ? `zone ${n0(x.pns_zone)}` : ""} />
-                  <VitalTile icon={Heartbeat} label="SNS index" value={n1(x.sns_index)} unit={x.sns_zone != null ? `zone ${n0(x.sns_zone)}` : ""} />
-                  <VitalTile icon={Pulse} label="Stress index" value={n0(x.stress_index)} unit={x.stress_index_norm != null ? `norm ${n0(x.stress_index_norm)}` : ""} />
-                  <VitalTile icon={Pulse} label="Stress level" value={x.stress_level != null ? (STRESS_LABEL[Math.round(x.stress_level)] ?? n0(x.stress_level)) : "—"} unit="" />
-                  <VitalTile icon={Heartbeat} label="Wellness" value={n0(x.wellness_index)} unit="/10" />
-                  <VitalTile icon={Heartbeat} label="Wellness level" value={x.wellness_level != null ? (WELLNESS_LABEL[Math.round(x.wellness_level)] ?? n0(x.wellness_level)) : "—"} unit="" />
+                {/* RISKS — vendor screening-risk flags, shown with severity, never a decision */}
+                <RiskFlags x={x} />
+
+                {/* STRESS */}
+                <VitalGrid title="Stress">
+                  <RichVitalTile icon={Pulse} label="Stress index" infoKey="stress_index"
+                    display={n0(x.stress_index)} unit=""
+                    ref={RICH_BANDS.stress_index.ref} band={x.stress_index != null ? RICH_BANDS.stress_index.band(x.stress_index) : null} />
+                  <VitalTile icon={Pulse} label="Stress level" infoKey="stress_level"
+                    value={x.stress_level != null ? (STRESS_LABEL[Math.round(x.stress_level)] ?? n0(x.stress_level)) : "—"} unit="" />
+                  <VitalTile icon={Pulse} label="Normalized stress" infoKey="stress_index" value={n0(x.stress_index_norm)} unit="%" />
                 </VitalGrid>
 
-                {/* RRI tachogram — the raw beat-to-beat waveform, as a sparkline; empty
+                {/* HEART RATE VARIABILITY */}
+                <VitalGrid title="Heart rate variability">
+                  <RichVitalTile icon={Pulse} label="SDNN" infoKey="sdnn"
+                    display={n0(x.sdnn)} unit="ms"
+                    ref={RICH_BANDS.sdnn.ref} band={x.sdnn != null ? RICH_BANDS.sdnn.band(x.sdnn) : null} />
+                  <VitalTile icon={Pulse} label="Mean RRI" infoKey="mean_rri" value={n0(x.mean_rri)} unit="ms" />
+                  <VitalTile icon={Pulse} label="RMSSD" infoKey="rmssd" value={n0(x.rmssd)} unit="ms" />
+                </VitalGrid>
+
+                {/* ADVANCED HRV */}
+                <VitalGrid title="Advanced heart rate variability">
+                  <RichVitalTile icon={Heartbeat} label="Recovery ability (PNS zone)" infoKey="pns_zone"
+                    display={x.pns_zone != null ? n0(x.pns_zone) : "—"} unit=""
+                    ref={RICH_BANDS.pns_zone.ref} band={x.pns_zone != null ? RICH_BANDS.pns_zone.band(x.pns_zone) : null} />
+                  <VitalTile icon={Heartbeat} label="PNS index" infoKey="pns_index" value={n1(x.pns_index)} unit="" />
+                  <RichVitalTile icon={Heartbeat} label="Stress response (SNS zone)" infoKey="sns_zone"
+                    display={x.sns_zone != null ? n0(x.sns_zone) : "—"} unit=""
+                    ref={RICH_BANDS.sns_zone.ref} band={x.sns_zone != null ? RICH_BANDS.sns_zone.band(x.sns_zone) : null} />
+                  <VitalTile icon={Heartbeat} label="SNS index" infoKey="sns_index" value={n1(x.sns_index)} unit="" />
+                  <VitalTile icon={Pulse} label="SD1" infoKey="sd1" value={n0(x.sd1)} unit="ms" />
+                  <VitalTile icon={Pulse} label="SD2" infoKey="sd2" value={n0(x.sd2)} unit="ms" />
+                  <VitalTile icon={Pulse} label="LF/HF" infoKey="lf_hf" value={n1(x.lf_hf)} unit="" />
+                </VitalGrid>
+
+                {/* RRI DATA — the raw beat-to-beat waveform, as a sparkline; empty
                     placeholder when the scan didn't return the series. */}
                 <div>
-                  <div className="text-[11px] uppercase tracking-[0.07em] font-semibold text-muted-foreground mb-2">RR-interval tachogram</div>
+                  <div className="text-[11px] uppercase tracking-[0.07em] font-semibold text-muted-foreground mb-2">RR-interval data</div>
                   {Array.isArray(x.rri_series) && x.rri_series.length > 4 ? (
                     <Sparkline series={x.rri_series as unknown as number[]} />
                   ) : (
                     <div className="rounded-lg border border-border bg-[#faf9f7] p-3 text-[12px] text-muted-foreground">Not available for this scan</div>
                   )}
                 </div>
-
-                {/* vendor risk flags — screening estimates, shown with severity, never a decision */}
-                <RiskFlags x={x} />
               </>
             )}
           </div>
@@ -770,7 +969,10 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
                 The applicant opens the scan link on their own phone and holds still for about a minute. Liveness and rPPG vitals return here automatically.
               </p>
               {state === "error" && (
-                <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-amber-700"><Warning weight="fill" className="size-3.5 shrink-0" /> {msg}</p>
+                <>
+                  <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-amber-700"><Warning weight="fill" className="size-3.5 shrink-0" /> {msg}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Demo: press <kbd className="rounded border border-border bg-[#faf9f7] px-1 py-0.5 font-mono">Shift</kbd>+<kbd className="rounded border border-border bg-[#faf9f7] px-1 py-0.5 font-mono">D</kbd> to fill mock results.</p>
+                </>
               )}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <button type="button" disabled={state === "starting" || state === "waiting"} onClick={start}
@@ -799,13 +1001,14 @@ function VitalGrid({ title, sub, children }: { title: string; sub?: string; chil
   )
 }
 
-function VitalTile({ icon: Icon, label, value, unit }: {
-  icon: React.ElementType; label: string; value: string; unit: string
+function VitalTile({ icon: Icon, label, value, unit, infoKey }: {
+  icon: React.ElementType; label: string; value: string; unit: string; infoKey?: string
 }) {
   return (
     <div className="rounded-lg border border-border bg-[#faf9f7] px-3 py-2.5">
       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.06em] font-semibold text-muted-foreground">
         <Icon weight="fill" className="size-3 text-primary shrink-0" /> <span className="truncate">{label}</span>
+        {infoKey && INFO[infoKey] && <InfoTip text={INFO[infoKey]} />}
       </div>
       <div className="mt-1 flex items-baseline gap-1">
         <span className="text-[18px] font-bold tabular-nums">{value}</span>
@@ -815,15 +1018,53 @@ function VitalTile({ icon: Icon, label, value, unit }: {
   )
 }
 
-// Vendor screening-risk flags (0..3). Displayed as severity chips; the agent, not this
-// panel, decides — these are facts we surface, never underwriting inputs (§1.8).
+// The rich tile (label+info, big value, status pill, plain-language sentence, Ref line) —
+// only for the ~10 parameters with a vendor-defined normal/abnormal band. `band` is
+// pre-computed by the caller (it needs gender for hemoglobin, systolic-only for BP, etc.).
+function RichVitalTile({ icon: Icon, label, infoKey, display, unit, ref: refText, band }: {
+  icon: React.ElementType; label: string; infoKey: string; display: string
+  unit: string; ref: string; band: Band | null
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-[#faf9f7] px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.06em] font-semibold text-muted-foreground">
+        <Icon weight="fill" className="size-3 text-primary shrink-0" /> <span className="truncate">{label}</span>
+        <InfoTip text={INFO[infoKey]} />
+      </div>
+      <div className="mt-1 flex items-baseline gap-1">
+        <span className="text-[18px] font-bold tabular-nums">{display}</span>
+        {unit && <span className="text-[11px] text-muted-foreground">{unit}</span>}
+      </div>
+      {band ? (
+        <>
+          <span className={`mt-1.5 inline-flex items-center rounded-full border px-2 py-0.5 text-[10.5px] font-semibold ${toneClass(band.tone)}`}>
+            {band.word}
+          </span>
+          <p className="mt-1.5 text-[11px] text-muted-foreground leading-snug">
+            {display}{unit ? ` ${unit}` : ""} — {band.tone === "ok" ? "within" : "outside"} the normal range.
+          </p>
+        </>
+      ) : (
+        <span className="mt-1.5 inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[10.5px] font-semibold text-muted-foreground">
+          No data
+        </span>
+      )}
+      <p className="mt-1 text-[10px] text-muted-foreground/70">Ref: {refText}</p>
+    </div>
+  )
+}
+
+// Vendor screening-risk flags (1-Low/2-Medium/3-High). Displayed as severity chips; the
+// agent, not this panel, decides — these are facts we surface, never underwriting inputs
+// (§1.8). 4 of the 5 are vendor-flagged "Under Research" (Vital Signs doc) — only Blood
+// Pressure Risk is production-confirmed.
 function RiskFlags({ x }: { x: Record<string, number> }) {
-  const flags: { key: string; label: string }[] = [
+  const flags: { key: string; label: string; underResearch?: boolean }[] = [
     { key: "risk_high_bp", label: "Blood pressure" },
-    { key: "risk_hba1c", label: "HbA1c" },
-    { key: "risk_glucose", label: "Fasting glucose" },
-    { key: "risk_cholesterol", label: "Cholesterol" },
-    { key: "risk_low_hemoglobin", label: "Low hemoglobin" },
+    { key: "risk_hba1c", label: "HbA1c", underResearch: true },
+    { key: "risk_glucose", label: "Fasting glucose", underResearch: true },
+    { key: "risk_cholesterol", label: "Cholesterol", underResearch: true },
+    { key: "risk_low_hemoglobin", label: "Low hemoglobin", underResearch: true },
   ]
   return (
     <div>
@@ -837,7 +1078,7 @@ function RiskFlags({ x }: { x: Record<string, number> }) {
           if (val == null) {
             return (
               <span key={f.key} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-[12px] font-semibold text-muted-foreground">
-                {f.label}<span className="opacity-70">·</span>—
+                {f.label}<span className="opacity-70">·</span>—{f.underResearch && <sup className="text-[9px] font-normal">†</sup>}
               </span>
             )
           }
@@ -845,11 +1086,14 @@ function RiskFlags({ x }: { x: Record<string, number> }) {
           const cls = tone === "ok" ? "stat-ok" : tone === "warn" ? "stat-warn" : "stat-bad"
           return (
             <span key={f.key} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-semibold ${cls}`}>
-              {f.label}<span className="opacity-70">·</span>{RISK_BAND[Math.max(0, Math.min(3, Math.round(val)))]}
+              {f.label}<span className="opacity-70">·</span>{RISK_BAND[Math.round(val)] ?? "—"}{f.underResearch && <sup className="text-[9px] font-normal">†</sup>}
             </span>
           )
         })}
       </div>
+      {flags.some((f) => f.underResearch) && (
+        <p className="mt-1.5 text-[10.5px] text-muted-foreground/70">† Under research — vendor has not yet validated this indicator.</p>
+      )}
     </div>
   )
 }

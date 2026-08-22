@@ -76,9 +76,9 @@ export function FaceScanMobile({ token }: { token: string }) {
               </span>
               <h1 className="text-[18px] font-bold tracking-tight">Face &amp; vitals scan</h1>
               <p className="mt-2 text-[13px] text-muted-foreground leading-relaxed">
-                Hold your phone at arm's length, look at the camera, and stay still for about
-                60 seconds. We'll read your liveness and a few wellness vitals — this is a
-                screening estimate, not a medical diagnosis.
+                For an accurate reading, wait 30–60 minutes after exercise, caffeine, or
+                smoking. Hold your phone at eye level, close to your face, with good front
+                lighting and no shadows. Then stay still for about 60 seconds.
               </p>
               <button onClick={startScan}
                 className="mt-5 w-full flex items-center justify-center gap-2 h-11 rounded-md bg-primary text-primary-foreground text-[14px] font-medium hover:bg-primary/90 transition-colors">
@@ -121,10 +121,6 @@ export function FaceScanMobile({ token }: { token: string }) {
           )}
         </div>
       </main>
-
-      <footer className="px-5 py-4 text-center text-[11px] text-muted-foreground">
-        Algorithmic screening estimate only — not a medical diagnosis.
-      </footer>
     </div>
   )
 }
