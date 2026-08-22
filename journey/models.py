@@ -124,6 +124,11 @@ class DecisionRecord(SQLModel, table=True):
 # Face-scan session (replaces the in-memory NuralX _SESSIONS)
 # ---------------------------------------------------------------------------
 class FaceScanSession(SQLModel, table=True):
+    """Session state machine (docs/vendor_apis.md PART B):
+    PENDING -(applicant taps Start)-> IN_PROGRESS -(webhook ok)-> COMPLETED;
+    EXPIRED on either TTL, ERROR/TIMEOUT on a failure webhook. `expires_at` always holds
+    the CURRENT deadline — set to the primary (QR) TTL at creation, then bumped to the
+    secondary (abandonment) TTL when /begin flips PENDING -> IN_PROGRESS."""
     id: Optional[int] = Field(default=None, primary_key=True)
     token: str = Field(index=True, unique=True)
     application_id: int = Field(foreign_key="application.id", index=True)
@@ -133,6 +138,20 @@ class FaceScanSession(SQLModel, table=True):
     result: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     expires_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=_now)
+
+
+PENDING_TTL_MIN = 20     # QR/link is live for 20 min before the applicant must tap Start
+IN_PROGRESS_TTL_MIN = 30  # once started, 30 min to finish before we call it abandoned
+
+
+def face_scan_status(fss: "FaceScanSession") -> str:
+    """Lazily resolves PENDING/IN_PROGRESS -> EXPIRED past `expires_at`; terminal statuses
+    (COMPLETED/ERROR/TIMEOUT) are returned as-is. No background job — checked on read."""
+    if fss.status in ("PENDING", "IN_PROGRESS") and fss.expires_at is not None:
+        exp = fss.expires_at if fss.expires_at.tzinfo else fss.expires_at.replace(tzinfo=timezone.utc)
+        if _now() >= exp:
+            return "EXPIRED"
+    return fss.status
 
 
 # ---------------------------------------------------------------------------

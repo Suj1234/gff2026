@@ -1,4 +1,5 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import QRCode from "qrcode"
 import type { AppSnapshot } from "./useJourney"
 import {
   Check, Spinner, SealCheck, Warning, QrCode, PaperPlaneTilt,
@@ -598,8 +599,17 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
   const [liveness, setLiveness] = useState<AppSnapshot["signals"]["liveness_facematch"] | null>(
     already ? snap.signals.liveness_facematch ?? null : null)
   const [scanUrl, setScanUrl] = useState<string>("")
+  const [qrDataUrl, setQrDataUrl] = useState<string>("")
   const [msg, setMsg] = useState<string>("")
   const pollRef = useRef<number | null>(null)
+
+  // scanUrl now points at OUR /face-scan/{token} instructions page (not NuralX's raw URL —
+  // that's only issued after the applicant taps Start there). Render it as a QR so the
+  // applicant can scan it with their own phone instead of the agent forwarding a link.
+  useEffect(() => {
+    if (!scanUrl) { setQrDataUrl(""); return }
+    QRCode.toDataURL(scanUrl, { width: 176, margin: 1 }).then(setQrDataUrl).catch(() => setQrDataUrl(""))
+  }, [scanUrl])
 
   // Poll the app snapshot for the webhook to land vitals (real NuralX is async); the mock
   // path fills them synchronously so the first poll already sees them.
@@ -730,8 +740,13 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
                   </a>
                 )}
               </div>
-              {state === "waiting" && scanUrl && (
-                <p className="mt-2 text-[11px] text-muted-foreground break-all">Or share this link with the applicant: {scanUrl}</p>
+              {state === "waiting" && qrDataUrl && (
+                <div className="mt-3 flex items-center gap-3">
+                  <img src={qrDataUrl} alt="Scan with your phone" className="size-[88px] rounded-md border border-border" />
+                  <p className="text-[11px] text-muted-foreground break-all">
+                    Applicant scans this with their phone camera, or use the link: {scanUrl}
+                  </p>
+                </div>
               )}
             </div>
           </div>

@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { FaceScanMobile } from './pages/FaceScanMobile.tsx'
 
 // The app is served under a base path (/demo/life/ in prod) behind the gateway.
 // All fetch() calls use absolute "/api/..." paths; prefix them with the base once
@@ -17,8 +18,12 @@ if (BASE) {
   }
 }
 
+// /face-scan/{token} is a session-less public page the APPLICANT'S PHONE opens (from the
+// QR shown on the agent's desktop) — it never goes through App's login/console flow.
+const faceScanMatch = window.location.pathname.replace(BASE, "").match(/^\/face-scan\/([^/]+)\/?$/)
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {faceScanMatch ? <FaceScanMobile token={faceScanMatch[1]} /> : <App />}
   </StrictMode>,
 )

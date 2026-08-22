@@ -17,6 +17,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict
+from datetime import timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
@@ -28,6 +29,7 @@ from . import auth, digilocker
 from .db import get_session, session_scope, track_api_call, track_event
 from .models import Application, Consent
 from .models import Session as SessionRow
+from .models import _now
 
 router = APIRouter(prefix="/api/journey", tags=["journey-steps"])
 # DigiLocker redirects the user back to DIGILOCKER_REDIRECT_URL (/.env = /digilocker/callback),
@@ -783,11 +785,38 @@ def set_health(req: HealthRequest, request: Request, db: Session = Depends(get_s
     return {"success": True, "bmi": bmi}
 
 
+def _frontend_url() -> str:
+    """Public base URL of the journey-ui frontend, for links a PHONE opens (not the API).
+    Falls back to PUBLIC_API_URL (fine for local dev, where both are served from one origin
+    via the Vite proxy)."""
+    return (os.getenv("PUBLIC_FRONTEND_URL") or os.getenv("PUBLIC_API_URL") or "").rstrip("/")
+
+
+def _initiate_nuralx_scan(db: Session, app: Application, ctid: str) -> "nuralx.ScanResponse":
+    """The 3 vendor calls (creds -> token -> patient-data). Raises on failure — caller logs."""
+    from underwriting import nuralx
+    creds = nuralx.creds_from_env()
+    creds.callback_url = f"{os.getenv('PUBLIC_API_URL', '').rstrip('/')}" \
+                         f"/api/journey/face-scan/callback?key={os.getenv('NURALX_CALLBACK_SECRET', '')}"
+    applicant = app.bundle.get("application", {}).get("applicant", {})
+    mobile = applicant.get("mobile")
+    # NuralX's patient-data call hard-requires name AND email (500s otherwise) — but
+    # email is optional at Step 1 (JOURNEY_PLAN §Step1) and often absent by Step 4.
+    # Synthesize a placeholder from the mobile on file so the call always has one;
+    # NuralX never emails it, this is only to satisfy their required-field check.
+    email = (app.bundle.get("signals", {}).get("email_intel", {}) or {}).get("email")
+    if not email:
+        email = f"{mobile or app.id}@noemail.gff2026.local"
+    patient = nuralx.Patient(name=applicant.get("name") or "Applicant", email=email, phone=mobile)
+    return nuralx.initiate_scan(creds, session_token=ctid, patient=patient)
+
+
 @router.post("/face-scan/start/{app_id}")
 def face_scan_start(app_id: int, request: Request, db: Session = Depends(get_session)) -> dict:
-    """Kick a NuralX scan session (real if NURALX_* set, else a mock completed result).
-    Returns the scan URL (real) so the UI can show a QR / link. Vitals arrive via the
-    NuralX webhook (already mounted) OR the mock fills them immediately."""
+    """Create a face-scan session (mock: fills vitals immediately; real: PENDING session,
+    NOT yet a NuralX call — docs/vendor_apis.md PART B: the QR/link points at OUR
+    instructions page, device-gated; NuralX is only called from /begin once the applicant
+    taps Start there). Returns OUR url so the desktop can render it as a QR."""
     app = _require_app(request, app_id, db)
     if app is None:
         return {"success": False, "message": "unauthorized"}
@@ -799,48 +828,71 @@ def face_scan_start(app_id: int, request: Request, db: Session = Depends(get_ses
         return {"success": True, "mode": "mock",
                 "message": "NuralX not configured — mock vitals injected."}
 
+    from .models import FaceScanSession, PENDING_TTL_MIN
+    token = uuid.uuid4().hex
+    db.add(FaceScanSession(
+        token=token, application_id=app.id,
+        client_transaction_id="",  # assigned in /begin, once NuralX is actually called
+        status="PENDING", expires_at=_now() + timedelta(minutes=PENDING_TTL_MIN),
+    ))
+    track_event(db, event_type="face_scan_session_created", application_id=app.id,
+                detail={"token": token})
+    return {"success": True, "mode": "real", "scan_url": f"{_frontend_url()}/face-scan/{token}"}
+
+
+@router.get("/face-scan/{token}/status")
+def face_scan_status_get(token: str, db: Session = Depends(get_session)) -> dict:
+    """PUBLIC — the mobile page polls this (it isn't logged into the desktop session)."""
+    from .models import FaceScanSession, face_scan_status
+    fss = db.exec(select(FaceScanSession).where(FaceScanSession.token == token)).first()
+    if fss is None:
+        return {"success": False, "message": "not_found"}
+    return {"success": True, "status": face_scan_status(fss), "scan_access_url": fss.scan_access_url}
+
+
+@router.post("/face-scan/{token}/begin")
+def face_scan_begin(token: str, db: Session = Depends(get_session)) -> dict:
+    """PUBLIC — the applicant tapped 'Start Scan' on the mobile instructions page. Device-
+    gates + logs SCAN_STARTED (PART B), THEN calls NuralX and hands back the real scan_url
+    to redirect to. Retry-safe: re-running on an IN_PROGRESS/ERROR session just issues a
+    fresh NuralX session under the same token (one-shot NuralX URLs don't survive a retry)."""
+    from .models import FaceScanSession, IN_PROGRESS_TTL_MIN, face_scan_status
+    fss = db.exec(select(FaceScanSession).where(FaceScanSession.token == token)).first()
+    if fss is None:
+        return {"success": False, "message": "not_found"}
+    cur = face_scan_status(fss)
+    if cur == "EXPIRED":
+        return {"success": False, "message": "expired"}
+    if cur == "COMPLETED":
+        return {"success": True, "status": "COMPLETED"}
+
+    app = db.get(Application, fss.application_id)
+    if app is None:
+        return {"success": False, "message": "not_found"}
+
     t0 = time.time()
+    ctid = uuid.uuid4().hex
     try:
-        from underwriting import nuralx
-        creds = nuralx.creds_from_env()
-        # NuralX echoes `client_transaction_ID` back in the webhook — key the session on it
-        # so /face-scan/callback can correlate the vitals to THIS application. It IS the
-        # session_token passed to initiate_scan (nuralx.py sends session_token as the id).
-        ctid = uuid.uuid4().hex
-        # Point the webhook at the JOURNEY callback (writes into app.bundle), not the
-        # standalone in-memory /nuralx/callback. Same shared ?key= secret.
-        creds.callback_url = f"{os.getenv('PUBLIC_API_URL', '').rstrip('/')}" \
-                             f"/api/journey/face-scan/callback?key={os.getenv('NURALX_CALLBACK_SECRET', '')}"
-        applicant = app.bundle.get("application", {}).get("applicant", {})
-        mobile = applicant.get("mobile")
-        # NuralX's patient-data call hard-requires name AND email (500s otherwise) — but
-        # email is optional at Step 1 (JOURNEY_PLAN §Step1) and often absent by Step 4.
-        # Synthesize a placeholder from the mobile on file so the call always has one;
-        # NuralX never emails it, this is only to satisfy their required-field check.
-        email = (app.bundle.get("signals", {}).get("email_intel", {}) or {}).get("email")
-        if not email:
-            email = f"{mobile or app.id}@noemail.gff2026.local"
-        patient = nuralx.Patient(name=applicant.get("name") or "Applicant",
-                                 email=email, phone=mobile)
-        resp = nuralx.initiate_scan(creds, session_token=ctid, patient=patient)
-        # persist a FaceScanSession so the webhook can correlate + resolve
-        from .models import FaceScanSession
-        db.add(FaceScanSession(
-            token=uuid.uuid4().hex, application_id=app.id,
-            client_transaction_id=ctid,
-            status="IN_PROGRESS", scan_access_url=resp.scan_url,
-        ))
+        resp = _initiate_nuralx_scan(db, app, ctid)
+        fss.client_transaction_id = ctid
+        fss.status = "IN_PROGRESS"
+        fss.scan_access_url = resp.scan_url
+        fss.expires_at = _now() + timedelta(minutes=IN_PROGRESS_TTL_MIN)
+        db.add(fss)
         track_api_call(db, provider="nuralx", endpoint="patient-data", mode="real",
-                       application_id=app.id, ok=True, latency_ms=int((time.time()-t0)*1000),
+                       application_id=app.id, ok=True, latency_ms=int((time.time() - t0) * 1000),
                        response_summary={"has_scan_url": bool(resp.scan_url)})
-        track_event(db, event_type="face_scan_initiated", application_id=app.id)
-        return {"success": True, "mode": "real", "scan_url": resp.scan_url}
+        track_event(db, event_type="face_scan_started", application_id=app.id,
+                    detail={"token": token})
+        return {"success": True, "status": "IN_PROGRESS", "scan_url": resp.scan_url}
     except Exception as e:
+        fss.status = "ERROR"
+        db.add(fss)
         track_api_call(db, provider="nuralx", endpoint="patient-data", mode="real",
                        application_id=app.id, ok=False, error=str(e)[:200])
         track_event(db, event_type="face_scan_error", application_id=app.id,
                     detail={"error": str(e)[:200]})
-        return {"success": False, "message": "Face scan unavailable — proceed; vitals optional."}
+        return {"success": False, "message": "Face scan unavailable — you can retry."}
 
 
 def _merge_mock_vitals(db: Session, app: Application) -> None:
