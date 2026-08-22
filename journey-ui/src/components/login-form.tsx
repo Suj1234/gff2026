@@ -75,7 +75,6 @@ export function LoginForm({ variant = "teal", onVerified, onVerifyStart, onVerif
     Object.fromEntries(PURPOSES.map((p) => [p.key, !!p.required])))
   const [consentOpen, setConsentOpen] = useState(false)
   const [otpRef, setOtpRef] = useState("")
-  const [debugOtp, setDebugOtp] = useState<string | null>(null)
   const [msg, setMsg] = useState("")
   const [busy, setBusy] = useState(false)
   // Resend cooldown so the button can't be spammed. Resend re-calls send-otp (fresh ref).
@@ -103,7 +102,7 @@ export function LoginForm({ variant = "teal", onVerified, onVerifyStart, onVerif
       })
       const d = await r.json()
       if (!d.success) { setMsg(d.message || "Could not send OTP"); return }
-      setOtpRef(d.otp_ref_id); setDebugOtp(d.debug_otp ?? null); setPhase("otp"); setOtp("")
+      setOtpRef(d.otp_ref_id); setPhase("otp"); setOtp("")
       setResendIn(30)  // 30s cooldown before resend is allowed
     } catch { setMsg("Network error. Is the API running on :8899?") }
     finally { setBusy(false) }
@@ -198,7 +197,6 @@ export function LoginForm({ variant = "teal", onVerified, onVerifyStart, onVerif
                     <Input id="otp" inputMode="numeric" placeholder="000000" autoFocus
                       value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
                       className="text-center tracking-[0.5em] text-lg h-12" />
-                    {debugOtp && <FieldDescription>debug OTP: <span className="text-primary font-medium">{debugOtp}</span></FieldDescription>}
                   </Field>
                   <Field>
                     <Button type="button" size="lg" className="h-11"

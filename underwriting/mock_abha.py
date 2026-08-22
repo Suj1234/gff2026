@@ -45,9 +45,54 @@ def _record(**overrides) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# ABHA-ID keying (journey UI, step_routes.py): the journey's ABHA-link step keys the
+# record off the ABHA NUMBER the applicant enters — never off their login mobile/PAN.
+# One memorable demo ABHA number returns a multi-condition record; every other ABHA
+# number (real or made up) is clean. This is intentionally separate from `_BY_IDENTITY`
+# below (PAN/mobile keying), which several engine fixtures/tests still depend on.
+# ---------------------------------------------------------------------------
+_SICK_ABHA_ID = "99999999999999"  # 99-9999-9999-9999 — the one demo "sick" ABHA number
+
+_ABHA_ID_SICK_RECORD: dict[str, Any] = {
+    "icd_codes": ["E11.9", "I25.10", "I10"],  # diabetes, ischaemic heart disease, hypertension
+    "diagnoses": ["E11.9", "I25.10", "I10"],
+    "prescriptions": ["metformin", "atorvastatin", "amlodipine"],
+    "unstructured_notes": [
+        "Pt reviewed in cardiology OPD; advised to continue anti-anginal therapy and "
+        "monitor blood sugar. Known diabetic on oral hypoglycaemics, hypertensive on "
+        "amlodipine.",
+    ],
+}
+
+
+def _normalize_abha_id(abha_id: Optional[str]) -> str:
+    """A 14-digit ABHA number normalizes to just its digits; an ABHA address (contains
+    '@') normalizes lowercased/stripped. Either way, formatting (dashes/spaces) never
+    changes the lookup key."""
+    s = (abha_id or "").strip()
+    if "@" in s:
+        return s.lower()
+    return "".join(ch for ch in s if ch.isdigit())
+
+
+def records_for_abha_id(abha_id: Optional[str]) -> dict[str, Any]:
+    """The ABHA record for an ABHA number/address, keyed ONLY off that id — never off
+    the applicant's mobile/PAN. The one demo sick id returns a multi-condition record;
+    any other id (unknown, made up, real-shaped) returns clean."""
+    if _normalize_abha_id(abha_id) == _SICK_ABHA_ID:
+        return _record(**_ABHA_ID_SICK_RECORD)
+    return dict(_CLEAN)
+
+
+# ---------------------------------------------------------------------------
 # The keyed lookup. Keys are the entered PAN (uppercased) or mobile (digits only).
 # Real demo identities from docs/vendor_apis.md §1 are reused so the ABHA record lines
 # up with the live identity/litigation half of the journey.
+#
+# NOTE: this PAN/mobile keying stays for the underwriting engine's own fixtures/tests
+# (test_phase_b.py) which exercise R-010/POSTPONE against these PANs directly. The
+# journey UI's ABHA-link step (step_routes.py) does NOT use this — it uses
+# `records_for_abha_id` above, keyed only by the ABHA number the applicant enters.
 # ---------------------------------------------------------------------------
 _BY_IDENTITY: dict[str, dict[str, Any]] = {
     # Paulson (self-employed, high litigation) — undisclosed diabetes + cardiac. The

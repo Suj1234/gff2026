@@ -11,7 +11,6 @@ export function MobileVerify() {
   const [otp, setOtp] = useState("");
   const [consent, setConsent] = useState(false);
   const [otpRef, setOtpRef] = useState("");
-  const [debugOtp, setDebugOtp] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -26,7 +25,7 @@ export function MobileVerify() {
       });
       const d = await r.json();
       if (!d.success) { setMsg(d.message || "Could not send OTP"); return; }
-      setOtpRef(d.otp_ref_id); setDebugOtp(d.debug_otp ?? null); setPhase("otp");
+      setOtpRef(d.otp_ref_id); setPhase("otp");
     } catch { setMsg("Network error — is the API running on :8899?"); }
     finally { setBusy(false); }
   }
@@ -134,9 +133,6 @@ export function MobileVerify() {
                     className="mono w-full text-center tracking-[0.5em] text-[22px] py-3 rounded-[var(--radius-sm)] border border-[var(--color-line-2)] bg-surface outline-none focus:border-brand transition-colors placeholder:text-ink-3 placeholder:tracking-[0.3em]"
                   />
                 </Field>
-                {debugOtp && (
-                  <p className="mono text-[11px] text-ink-3 -mt-1">debug OTP: <span className="text-warn">{debugOtp}</span></p>
-                )}
                 <PrimaryButton disabled={otp.length !== 6 || busy} onClick={verifyOtp}>
                   {busy ? "Verifying…" : <>Verify &amp; continue <ArrowRight size={16} /></>}
                 </PrimaryButton>

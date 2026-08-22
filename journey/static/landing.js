@@ -34,11 +34,6 @@
     $("step-mobile").hidden = true;
     $("step-otp").hidden = false;
     setMsg(data.message, "ok");
-    if (data.debug_otp) {
-      const d = $("debug-otp");
-      d.hidden = false;
-      d.textContent = "Debug mode — OTP: " + data.debug_otp;
-    }
     $("otp").focus();
   });
 

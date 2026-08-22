@@ -1125,13 +1125,12 @@ function AbhaFetch({ appId, snap }: { appId: number | null; snap: AppSnapshot })
   const [useAddress, setUseAddress] = useState(false)
   const [authMethod, setAuthMethod] = useState<"mobile_otp" | "aadhaar_otp">("mobile_otp")
   const [otp, setOtp] = useState("")
-  const [demoOtp, setDemoOtp] = useState("")
   const [hiTypes, setHiTypes] = useState<string[]>(["Diagnoses", "Prescriptions"])
   const [range, setRange] = useState("Last 3 years")
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState("")
 
-  const openModal = () => { setStage("id"); setOtp(""); setDemoOtp(""); setMsg(""); setOpen(true) }
+  const openModal = () => { setStage("id"); setOtp(""); setMsg(""); setOpen(true) }
 
   async function sendOtp() {
     if (appId == null || !abhaId.trim()) return
@@ -1142,7 +1141,7 @@ function AbhaFetch({ appId, snap }: { appId: number | null; snap: AppSnapshot })
         body: JSON.stringify({ app_id: appId, abha_id: abhaId.trim(), auth_method: authMethod }),
       })
       const d = await r.json()
-      if (d.success) { setDemoOtp(d.debug_otp || ""); setStage("otp") }
+      if (d.success) { setStage("otp") }
       else setMsg(d.message || "Could not start ABHA verification.")
     } catch { setMsg("Could not reach ABDM — you can proceed; ABHA is optional.") }
     finally { setBusy(false) }
@@ -1245,7 +1244,6 @@ function AbhaFetch({ appId, snap }: { appId: number | null; snap: AppSnapshot })
             <div>
               <div className="flex items-center gap-2 text-[12px] font-semibold mb-1.5">
                 Enter OTP
-                {demoOtp && <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-bold">demo OTP {demoOtp}</span>}
               </div>
               <input autoFocus inputMode="numeric" maxLength={6} placeholder="6-digit OTP" value={otp}
                 onChange={(e) => setOtp(e.target.value.replace(/[^\d]/g, "").slice(0, 6))}

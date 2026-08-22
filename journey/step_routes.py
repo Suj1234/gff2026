@@ -1008,8 +1008,8 @@ def abha_otp_send(req: AbhaOtpSendRequest, request: Request, db: Session = Depen
         return {"success": False, "message": "unauthorized"}
     if not (req.abha_id or "").strip():
         return {"success": False, "message": "Enter an ABHA number or address."}
-    # Deterministic demo OTP from the ABHA id (no RNG — reproducible on stage, §11 pure).
-    otp = f"{(abs(hash(req.abha_id.strip())) % 900000) + 100000:06d}"
+    # Fixed demo OTP (never random/computed) — same code every time, never shown on the UI.
+    otp = os.getenv("OTP_FIXED_CODE", "123456")
 
     def add(bundle):
         j = bundle.setdefault("_journey", {})
@@ -1044,10 +1044,8 @@ def abha_fetch(app_id: int, request: Request, otp: str = "", db: Session = Depen
     _record_consent(db, app, "abha", "ABDM")
 
     from underwriting import mock_abha
-    applicant = app.bundle.get("application", {}).get("applicant", {})
-    pan = (app.bundle.get("signals", {}).get("pan_verify", {}) or {}).get("pan")
-    mobile = applicant.get("mobile")
-    record = mock_abha.records_for(pan=pan, mobile=mobile)
+    abha_id = (app.bundle.get("_journey") or {}).get("abha_id")
+    record = mock_abha.records_for_abha_id(abha_id)
 
     def add(bundle):
         bundle.setdefault("signals", {})["abha_health_records"] = record
