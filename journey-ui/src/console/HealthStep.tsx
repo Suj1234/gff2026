@@ -147,12 +147,13 @@ export function visibleHealthSubSteps(_h: HealthState): { key: string; label: st
 }
 
 export function HealthStep({
-  appId, snap, value, onChange, subStep = 0, onHealthChatDone,
+  appId, snap, value, onChange, subStep = 0, onHealthChatDone, reload,
 }: {
   appId: number | null; snap: AppSnapshot
   value: HealthState; onChange: (s: HealthState) => void
   subStep?: number   // which visible sub-step to render (Console drives it via the footer)
   onHealthChatDone?: () => void   // gates Continue on the "healthchat" sub-step (§7)
+  reload: () => void   // refresh Console's snapshot after face-scan/ABHA/prescription actions
 }) {
   const set = (patch: Partial<HealthState>) => onChange({ ...value, ...patch })
   const bmi = bmiOf(value.height_cm, value.weight_kg)
@@ -190,9 +191,9 @@ export function HealthStep({
           the conversational deep-dive's triage needs these facts before it can run. ── */}
       {active === "facescan" && (
         <div className="space-y-8 animate-[fade-up_.2s_ease]">
-          <FaceScan appId={appId} snap={snap} />
-          <AbhaFetch appId={appId} snap={snap} />
-          <PrescriptionUpload appId={appId} snap={snap} />
+          <FaceScan appId={appId} snap={snap} reload={reload} />
+          <AbhaFetch appId={appId} snap={snap} reload={reload} />
+          <PrescriptionUpload appId={appId} snap={snap} reload={reload} />
         </div>
       )}
 
@@ -727,12 +728,22 @@ function Sparkline({ series }: { series: number[] }) {
   )
 }
 
-function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) {
+function FaceScan({ appId, snap, reload }: { appId: number | null; snap: AppSnapshot; reload: () => void }) {
   const already = snap.signals.rppg_scan?.status === "available"
   const [state, setState] = useState<ScanState>(already ? "done" : "idle")
   const [rppg, setRppg] = useState<Rppg | null>(already ? snap.signals.rppg_scan ?? null : null)
   const [liveness, setLiveness] = useState<AppSnapshot["signals"]["liveness_facematch"] | null>(
     already ? snap.signals.liveness_facematch ?? null : null)
+  // `already` only seeds state at mount — if `snap` lands the completed scan AFTER this
+  // mount (e.g. the widget remounted with a still-stale snapshot right after Continue/Back),
+  // catch up here instead of staying stuck on "idle" until the user retries the scan.
+  useEffect(() => {
+    if (already && state !== "done") {
+      setRppg(snap.signals.rppg_scan ?? null)
+      setLiveness(snap.signals.liveness_facematch ?? null)
+      setState("done")
+    }
+  }, [already])  // eslint-disable-line react-hooks/exhaustive-deps
   const [scanUrl, setScanUrl] = useState<string>("")
   const [qrDataUrl, setQrDataUrl] = useState<string>("")
   const [msg, setMsg] = useState<string>("")
@@ -777,6 +788,7 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
         setLiveness(d.signals.liveness_facematch ?? null)
         setState("done")
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+        reload()   // refresh Console's snapshot now, so a remount (Continue/Back) sees "done" immediately
       }
     } catch { /* transient — keep polling */ }
   }
@@ -1116,10 +1128,18 @@ const fmtAbha = (s: string) => {
   return [d.slice(0, 2), d.slice(2, 6), d.slice(6, 10), d.slice(10, 14)].filter(Boolean).join("-")
 }
 
-function AbhaFetch({ appId, snap }: { appId: number | null; snap: AppSnapshot }) {
+function AbhaFetch({ appId, snap, reload }: { appId: number | null; snap: AppSnapshot; reload: () => void }) {
   const existing = snap.signals.abha_health_records
   const [done, setDone] = useState(existing?.status === "available")
   const [count, setCount] = useState<number>(existing?.diagnoses?.length ?? 0)
+  // Catch up if `existing` lands true after this mount (e.g. a remount with a stale
+  // snapshot right after fetching) — mirrors the FaceScan fix above.
+  useEffect(() => {
+    if (existing?.status === "available" && !done) {
+      setCount(existing.diagnoses?.length ?? 0)
+      setDone(true)
+    }
+  }, [existing?.status])  // eslint-disable-line react-hooks/exhaustive-deps
   const [open, setOpen] = useState(false)
   // modal-internal flow state
   const [stage, setStage] = useState<AbhaStage>("id")
@@ -1155,7 +1175,7 @@ function AbhaFetch({ appId, snap }: { appId: number | null; snap: AppSnapshot })
     try {
       const r = await fetch(`/api/journey/abha/fetch/${appId}?otp=${encodeURIComponent(otp.trim())}`, { method: "POST" })
       const d = await r.json()
-      if (d.success) { setCount((d.diagnoses || []).length); setDone(true); setOpen(false) }
+      if (d.success) { setCount((d.diagnoses || []).length); setDone(true); setOpen(false); reload() }
       else setMsg(d.message || "ABHA verification failed.")
     } catch { setMsg("Could not reach ABDM — you can proceed.") }
     finally { setBusy(false) }
@@ -1307,11 +1327,18 @@ function AbhaFetch({ appId, snap }: { appId: number | null; snap: AppSnapshot })
 // for the applicant/underwriter reviewing this screen.
 type DocResult = { name: string; status: "reading" | "done" | "error"; drugs: string[]; note?: string }
 
-function PrescriptionUpload({ appId, snap }: { appId: number | null; snap: AppSnapshot }) {
+function PrescriptionUpload({ appId, snap, reload }: { appId: number | null; snap: AppSnapshot; reload: () => void }) {
   const existing = snap.signals.prescription_ocr
   const [docs, setDocs] = useState<DocResult[]>(
     existing?.status === "available" && existing.drug_names?.length
       ? [{ name: "Previously uploaded", status: "done", drugs: existing.drug_names }] : [])
+  // Catch up if this mount's snap was stale (existing lands available only after mount,
+  // e.g. right after a remount from Continue/Back) — same shape as FaceScan/AbhaFetch.
+  useEffect(() => {
+    if (existing?.status === "available" && existing.drug_names?.length && !docs.length) {
+      setDocs([{ name: "Previously uploaded", status: "done", drugs: existing.drug_names }])
+    }
+  }, [existing?.status])  // eslint-disable-line react-hooks/exhaustive-deps
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Poll for ONE upload to land, diffing against the drug list already known before this
@@ -1369,6 +1396,7 @@ function PrescriptionUpload({ appId, snap }: { appId: number | null; snap: AppSn
         priorDrugs = [...priorDrugs, ...drugs]
         setDocs((cur) => cur.map((d, j) => j === startIdx + i
           ? { ...d, status: note && !drugs.length ? "error" : "done", drugs, note } : d))
+        reload()   // refresh Console's snapshot so a remount (Continue/Back) sees this upload
       } catch {
         setDocs((cur) => cur.map((d, j) => j === startIdx + i ? { ...d, status: "error", note: "Couldn't upload — try again." } : d))
       }

@@ -1586,6 +1586,7 @@ def get_app(app_id: int, request: Request, db: Session = Depends(get_session)) -
         "financial": application.get("financial", {}) or {},   # Step 3 pre-fill on revisit
         "product": application.get("product", {}) or {},       # Step 7 amount-due fallback (?start=7 / refresh)
         "health_declaration": application.get("health_declaration", {}) or {},  # Step 4 pre-fill on revisit
+        "nominees": application.get("nominees", []) or [],      # Step 6 pre-fill on revisit
         "signals": {
             "pan_verify": signals.get("pan_verify", {}) or {},
             "mobile_intel": signals.get("mobile_intel", {}) or {},

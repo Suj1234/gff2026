@@ -126,6 +126,15 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
     }
     const e = snap.signals?.email_intel?.email
     if (e) setEmail(e)
+    // Step 2 revisit: rehydrate the saved product/cover choice, else a page reload (or a
+    // deep link straight to a later step) silently reverts it to the hardcoded default.
+    const p = snap.product
+    if (p && (p.plan || p.sum_assured || p.tenure_years)) {
+      setProduct({
+        plan: p.plan || "term_protect", sum_assured: p.sum_assured || 10_000_000,
+        tenure_years: p.tenure_years || 20, riders: p.riders || [],
+      })
+    }
     // Step 4 revisit: rehydrate the health form from what was already saved, so the form
     // shows the conditions the applicant declared (and the rail + form agree). Editing then
     // overwrites it normally. Only when there IS saved health data.
@@ -138,6 +147,16 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
     const ha = snap.health_agent
     if (ha && (!ha.flagged?.length || ha.flagged.every((f) => ha.threads?.[f.bucket]?.done))) {
       setHealthChatDone(true)
+    }
+    // Step 6 revisit: rehydrate saved nominees, else a page reload (or a deep link straight
+    // to Payment) silently reverts the form to blank and Continue would overwrite them.
+    if (snap.nominees?.length) {
+      setNominees(snap.nominees.map((n) => ({
+        name: n.name || "", dob: n.dob || "", relationship: n.relationship || "",
+        share_pct: n.share_pct ?? 100, address: n.address || "",
+        appointee_name: n.appointee?.name || "", appointee_dob: n.appointee?.dob || "",
+        appointee_relationship: n.appointee?.relationship || "",
+      })))
     }
     prefilled.current = true
   }, [snap])
@@ -317,7 +336,7 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
                 {step === 2 && <ProductStep appId={appId} snap={snap} value={product} onChange={setProduct} onPremium={setPremium} />}
                 {step === 3 && <FinancialStep appId={appId} snap={snap} value={financial} onChange={setFinancial} />}
                 {step === 4 && <HealthStep appId={appId} snap={snap} value={health} onChange={setHealth} subStep={healthSub}
-                  onHealthChatDone={() => setHealthChatDone(true)} />}
+                  onHealthChatDone={() => setHealthChatDone(true)} reload={reload} />}
                 {step === 5 && <DecisionStep appId={appId} />}
                 {step === 6 && <NomineeStep value={nominees} onChange={(n) => { setNominees(n); setStepMsg("") }} />}
                 {step === 7 && <PaymentStep appId={appId} snap={snap} premium={premium} />}

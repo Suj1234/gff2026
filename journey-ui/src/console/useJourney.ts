@@ -13,6 +13,7 @@ export type Financial = {
 }
 export type Product = {
   plan?: string; product_type?: string; sum_assured?: number; tenure_years?: number
+  riders?: { id: string; amount: number }[]
   premium?: number; payment_mode?: string
 }
 export type Signals = {
@@ -53,6 +54,10 @@ export type HealthAgentState = {
   threads?: Record<string, HealthThreadState>
   second_pass_run?: boolean
 }
+export type NomineeSnapshot = {
+  name?: string; dob?: string; relationship?: string; share_pct?: number; address?: string
+  appointee?: { name?: string; dob?: string; relationship?: string }
+}
 export type AppSnapshot = {
   success: boolean
   application_number?: string
@@ -61,6 +66,7 @@ export type AppSnapshot = {
   applicant: Applicant
   financial?: Financial
   product?: Product
+  nominees?: NomineeSnapshot[]  // Step 6 pre-fill on revisit
   health_declaration?: Record<string, unknown>   // Step 4 pre-fill on revisit (flat payload)
   health_agent?: HealthAgentState                 // Step 4 conversational deep-dive state
   bank_statement_upload?: { status?: "processing" | "done" | "error"; filename?: string; message?: string }
