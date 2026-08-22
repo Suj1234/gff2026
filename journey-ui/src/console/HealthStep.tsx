@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react"
 import QRCode from "qrcode"
 import type { AppSnapshot } from "./useJourney"
 import {
-  Check, Spinner, SealCheck, Warning, QrCode, PaperPlaneTilt,
-  Pulse, Heartbeat, Wind, Drop, FirstAid, X, Plus, UploadSimple,
+  Check, Spinner, SealCheck, Warning, QrCode, Copy,
+  Pulse, Heartbeat, Wind, Drop, FirstAid, X, Plus, UploadSimple, CaretDown,
 } from "@phosphor-icons/react"
 import { Modal } from "./Modal"
 import { HealthChatPanel } from "./HealthChatPanel"
@@ -601,6 +601,8 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
   const [scanUrl, setScanUrl] = useState<string>("")
   const [qrDataUrl, setQrDataUrl] = useState<string>("")
   const [msg, setMsg] = useState<string>("")
+  const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const pollRef = useRef<number | null>(null)
 
   // scanUrl now points at OUR /face-scan/{token} instructions page (not NuralX's raw URL —
@@ -646,7 +648,7 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
 
   return (
     <section>
-      <RegionHead title="Face scan" hint="A 60-second phone scan reads liveness and clinical vitals. Wellness estimates support triage only — not stand-alone underwriting." />
+      <RegionHead title="Face scan" hint="A 60-second phone scan reads liveness and vitals." />
 
       <div className="rounded-xl border border-border bg-white p-4">
         {state === "done" ? (
@@ -665,56 +667,100 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
               <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold shrink-0 ${livenessFailed ? "stat-bad" : "stat-ok"}`}>
                 <Check weight="bold" className="size-3" /> {livenessFailed ? "Flagged" : "Done"}
               </span>
+              <button type="button" onClick={() => setExpanded((e) => !e)}
+                aria-label={expanded ? "Collapse results" : "Expand results"}
+                className="grid place-items-center size-7 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors shrink-0">
+                <CaretDown weight="bold" className={`size-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`} />
+              </button>
             </div>
 
-            {/* CARDIOVASCULAR — the four R-017 reads + derived pressures */}
-            <VitalGrid title="Cardiovascular">
-              <VitalTile icon={Heartbeat} label="Heart rate" value={n0(v.heart_rate)} unit="bpm" />
-              <VitalTile icon={Wind} label="Respiratory" value={n0(v.respiratory_rate)} unit="/min" />
-              <VitalTile icon={Drop} label="SpO₂" value={n0(v.spo2)} unit="%" />
-              <VitalTile icon={Pulse} label="Blood pressure" value={bpText(v.bp)} unit="mmHg" />
-              {x.map != null && <VitalTile icon={Heartbeat} label="Mean art. pr." value={n0(x.map)} unit="mmHg" />}
-              {x.pulse_pressure != null && <VitalTile icon={Heartbeat} label="Pulse pressure" value={n0(x.pulse_pressure)} unit="mmHg" />}
-              {x.cardiac_workload != null && <VitalTile icon={Heartbeat} label="Cardiac load" value={n1(x.cardiac_workload)} unit="" />}
-              {x.prq != null && <VitalTile icon={Pulse} label="PRQ" value={n1(x.prq)} unit="" />}
-            </VitalGrid>
+            {expanded && (
+              <>
+                {/* CARDIOVASCULAR — the four R-017 reads + derived pressures. Every tile
+                    always renders (n0/n1/bpText already fall back to "—" when absent) so
+                    the panel shows the full ~30-parameter set NuralX can return, not just
+                    whatever happened to come back on this scan. */}
+                <VitalGrid title="Cardiovascular">
+                  <VitalTile icon={Heartbeat} label="Heart rate" value={n0(v.heart_rate)} unit="bpm" />
+                  <VitalTile icon={Wind} label="Respiratory" value={n0(v.respiratory_rate)} unit="/min" />
+                  <VitalTile icon={Drop} label="SpO₂" value={n0(v.spo2)} unit="%" />
+                  <VitalTile icon={Pulse} label="Blood pressure" value={bpText(v.bp)} unit="mmHg" />
+                  <VitalTile icon={Heartbeat} label="Mean art. pr." value={n0(x.map)} unit="mmHg" />
+                  <VitalTile icon={Heartbeat} label="Pulse pressure" value={n0(x.pulse_pressure)} unit="mmHg" />
+                  <VitalTile icon={Heartbeat} label="Cardiac load" value={n1(x.cardiac_workload)} unit="" />
+                  <VitalTile icon={Pulse} label="PRQ" value={n1(x.prq)} unit="" />
+                </VitalGrid>
 
-            {/* METABOLIC — HbA1c / hemoglobin (screening estimates) */}
-            {(x.hba1c != null || x.hemoglobin != null) && (
-              <VitalGrid title="Metabolic" sub="Screening estimates · not underwriting inputs">
-                {x.hemoglobin != null && <VitalTile icon={Drop} label="Hemoglobin" value={n1(x.hemoglobin)} unit="g/dL" />}
-                {x.hba1c != null && <VitalTile icon={Pulse} label="HbA1c" value={n1(x.hba1c)} unit="%" />}
-              </VitalGrid>
+                {/* METABOLIC — HbA1c / hemoglobin (screening estimates) */}
+                <VitalGrid title="Metabolic" sub="Screening estimates · not underwriting inputs">
+                  <VitalTile icon={Drop} label="Hemoglobin" value={n1(x.hemoglobin)} unit="g/dL" />
+                  <VitalTile icon={Pulse} label="HbA1c" value={n1(x.hba1c)} unit="%" />
+                </VitalGrid>
+
+                {/* HRV / AUTONOMIC — the full heart-rate-variability + stress/wellness set */}
+                <VitalGrid title="HRV & autonomic balance" sub="Wellness estimates only">
+                  <VitalTile icon={Pulse} label="SDNN" value={n0(x.sdnn)} unit="ms" />
+                  <VitalTile icon={Pulse} label="RMSSD" value={n0(x.rmssd)} unit="ms" />
+                  <VitalTile icon={Pulse} label="Mean RRI" value={n0(x.mean_rri)} unit="ms" />
+                  <VitalTile icon={Pulse} label="SD1" value={n0(x.sd1)} unit="ms" />
+                  <VitalTile icon={Pulse} label="SD2" value={n0(x.sd2)} unit="ms" />
+                  <VitalTile icon={Pulse} label="LF/HF" value={n1(x.lf_hf)} unit="" />
+                  <VitalTile icon={Heartbeat} label="PNS index" value={n1(x.pns_index)} unit={x.pns_zone != null ? `zone ${n0(x.pns_zone)}` : ""} />
+                  <VitalTile icon={Heartbeat} label="SNS index" value={n1(x.sns_index)} unit={x.sns_zone != null ? `zone ${n0(x.sns_zone)}` : ""} />
+                  <VitalTile icon={Pulse} label="Stress index" value={n0(x.stress_index)} unit={x.stress_index_norm != null ? `norm ${n0(x.stress_index_norm)}` : ""} />
+                  <VitalTile icon={Pulse} label="Stress level" value={x.stress_level != null ? (STRESS_LABEL[Math.round(x.stress_level)] ?? n0(x.stress_level)) : "—"} unit="" />
+                  <VitalTile icon={Heartbeat} label="Wellness" value={n0(x.wellness_index)} unit="/10" />
+                  <VitalTile icon={Heartbeat} label="Wellness level" value={x.wellness_level != null ? (WELLNESS_LABEL[Math.round(x.wellness_level)] ?? n0(x.wellness_level)) : "—"} unit="" />
+                </VitalGrid>
+
+                {/* RRI tachogram — the raw beat-to-beat waveform, as a sparkline; empty
+                    placeholder when the scan didn't return the series. */}
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.07em] font-semibold text-muted-foreground mb-2">RR-interval tachogram</div>
+                  {Array.isArray(x.rri_series) && x.rri_series.length > 4 ? (
+                    <Sparkline series={x.rri_series as unknown as number[]} />
+                  ) : (
+                    <div className="rounded-lg border border-border bg-[#faf9f7] p-3 text-[12px] text-muted-foreground">Not available for this scan</div>
+                  )}
+                </div>
+
+                {/* vendor risk flags — screening estimates, shown with severity, never a decision */}
+                <RiskFlags x={x} />
+              </>
             )}
-
-            {/* HRV / AUTONOMIC — the full heart-rate-variability + stress/wellness set */}
-            {(x.sdnn != null || x.stress_index != null || x.pns_index != null) && (
-              <VitalGrid title="HRV & autonomic balance" sub="Wellness estimates only">
-                {x.sdnn != null && <VitalTile icon={Pulse} label="SDNN" value={n0(x.sdnn)} unit="ms" />}
-                {x.rmssd != null && <VitalTile icon={Pulse} label="RMSSD" value={n0(x.rmssd)} unit="ms" />}
-                {x.mean_rri != null && <VitalTile icon={Pulse} label="Mean RRI" value={n0(x.mean_rri)} unit="ms" />}
-                {x.sd1 != null && <VitalTile icon={Pulse} label="SD1" value={n0(x.sd1)} unit="ms" />}
-                {x.sd2 != null && <VitalTile icon={Pulse} label="SD2" value={n0(x.sd2)} unit="ms" />}
-                {x.lf_hf != null && <VitalTile icon={Pulse} label="LF/HF" value={n1(x.lf_hf)} unit="" />}
-                {x.pns_index != null && <VitalTile icon={Heartbeat} label="PNS index" value={n1(x.pns_index)} unit={x.pns_zone != null ? `zone ${n0(x.pns_zone)}` : ""} />}
-                {x.sns_index != null && <VitalTile icon={Heartbeat} label="SNS index" value={n1(x.sns_index)} unit={x.sns_zone != null ? `zone ${n0(x.sns_zone)}` : ""} />}
-                {x.stress_index != null && <VitalTile icon={Pulse} label="Stress index" value={n0(x.stress_index)} unit={x.stress_index_norm != null ? `norm ${n0(x.stress_index_norm)}` : ""} />}
-                {x.stress_level != null && <VitalTile icon={Pulse} label="Stress level" value={STRESS_LABEL[Math.round(x.stress_level)] ?? n0(x.stress_level)} unit="" />}
-                {x.wellness_index != null && <VitalTile icon={Heartbeat} label="Wellness" value={n0(x.wellness_index)} unit="/10" />}
-                {x.wellness_level != null && <VitalTile icon={Heartbeat} label="Wellness level" value={WELLNESS_LABEL[Math.round(x.wellness_level)] ?? n0(x.wellness_level)} unit="" />}
-              </VitalGrid>
-            )}
-
-            {/* RRI tachogram — the raw beat-to-beat waveform, as a sparkline */}
-            {Array.isArray(x.rri_series) && x.rri_series.length > 4 && (
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.07em] font-semibold text-muted-foreground mb-2">RR-interval tachogram</div>
-                <Sparkline series={x.rri_series as unknown as number[]} />
-              </div>
-            )}
-
-            {/* vendor risk flags — screening estimates, shown with severity, never a decision */}
-            <RiskFlags x={x} />
+          </div>
+        ) : state === "waiting" && qrDataUrl ? (
+          <div className="grid sm:grid-cols-[auto_1fr] gap-5">
+            <div className="flex flex-col items-center gap-2">
+              <img src={qrDataUrl} alt="Scan with your phone" className="size-[168px] rounded-lg border border-border" />
+              <button type="button" onClick={async () => {
+                try { await navigator.clipboard.writeText(scanUrl); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* clipboard unavailable */ }
+              }} className="inline-flex items-center gap-1.5 rounded-md border border-border text-[12px] font-medium px-3 h-8 hover:border-primary transition-colors">
+                <Copy weight="bold" className="size-3.5" /> {copied ? "Copied!" : "Copy scan link"}
+              </button>
+            </div>
+            <div>
+              <p className="text-[13px] font-semibold mb-3">Scan with your phone</p>
+              <ol className="space-y-2.5">
+                {[
+                  ["Open your phone camera", "No app download required — your phone's built-in camera is enough."],
+                  ["Point it at this QR code", "A link will appear on your phone screen. Tap it to open the scan page."],
+                  ["Complete the 60-second scan", "Look directly at the front camera and stay still."],
+                  ["Results appear here automatically", "This panel updates the moment the scan is done — no refresh needed."],
+                ].map(([title, body], i) => (
+                  <li key={title} className="flex items-start gap-2.5">
+                    <span className="grid place-items-center size-5 rounded-full bg-primary text-primary-foreground text-[11px] font-bold shrink-0 mt-0.5">{i + 1}</span>
+                    <div className="min-w-0">
+                      <div className="text-[12.5px] font-medium">{title}</div>
+                      <div className="text-[12px] text-muted-foreground leading-snug">{body}</div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <p className="mt-3 flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                <Spinner weight="bold" className="size-3.5 animate-spin text-primary" /> Waiting for your phone…
+              </p>
+            </div>
           </div>
         ) : (
           <div className="flex items-start gap-3">
@@ -730,24 +776,9 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
                 <button type="button" disabled={state === "starting" || state === "waiting"} onClick={start}
                   className="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground text-[13px] font-medium px-4 h-9 hover:bg-primary/90 transition-colors disabled:opacity-60">
                   {state === "starting" ? (<><Spinner weight="bold" className="size-4 animate-spin" /> Starting…</>)
-                    : state === "waiting" ? (<><Spinner weight="bold" className="size-4 animate-spin" /> Waiting for scan…</>)
                     : (<><QrCode weight="bold" className="size-4" /> Start face scan</>)}
                 </button>
-                {scanUrl && (
-                  <a href={scanUrl} target="_blank" rel="noreferrer"
-                    className="inline-flex items-center gap-2 rounded-md border border-border text-[13px] font-medium px-4 h-9 hover:border-primary transition-colors">
-                    <PaperPlaneTilt weight="bold" className="size-4" /> Open scan link
-                  </a>
-                )}
               </div>
-              {state === "waiting" && qrDataUrl && (
-                <div className="mt-3 flex items-center gap-3">
-                  <img src={qrDataUrl} alt="Scan with your phone" className="size-[88px] rounded-md border border-border" />
-                  <p className="text-[11px] text-muted-foreground break-all">
-                    Applicant scans this with their phone camera, or use the link: {scanUrl}
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -793,8 +824,7 @@ function RiskFlags({ x }: { x: Record<string, number> }) {
     { key: "risk_glucose", label: "Fasting glucose" },
     { key: "risk_cholesterol", label: "Cholesterol" },
     { key: "risk_low_hemoglobin", label: "Low hemoglobin" },
-  ].filter((f) => x[f.key] != null)
-  if (!flags.length) return null
+  ]
   return (
     <div>
       <div className="flex items-baseline gap-2 mb-2">
@@ -804,6 +834,13 @@ function RiskFlags({ x }: { x: Record<string, number> }) {
       <div className="flex flex-wrap gap-2">
         {flags.map((f) => {
           const val = x[f.key]
+          if (val == null) {
+            return (
+              <span key={f.key} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-[12px] font-semibold text-muted-foreground">
+                {f.label}<span className="opacity-70">·</span>—
+              </span>
+            )
+          }
           const tone = riskTone(val)
           const cls = tone === "ok" ? "stat-ok" : tone === "warn" ? "stat-warn" : "stat-bad"
           return (
