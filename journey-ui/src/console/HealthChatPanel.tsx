@@ -131,7 +131,7 @@ export function HealthChatPanel({
     const q = thread.next_question || ""
     const a = answer.trim()
     setAnswer("")
-    setThread({ ...thread, transcript: [...thread.transcript, { q, a }] })
+    setThread({ ...thread, transcript: [...thread.transcript, { q, a }], next_question: undefined })
     setThinking(true)
     try {
       const r = await fetch(`/api/journey/health/thread/answer/${appId}`, {
