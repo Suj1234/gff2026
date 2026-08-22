@@ -630,9 +630,15 @@ def _merge_prescription_ocr(existing: dict, new: dict) -> dict:
     """Multiple prescriptions/reports can be uploaded (one per document) — MERGE, don't
     overwrite: list fields concatenate (dedup drug names/ICD codes, keep every raw_text/
     diagnosis_notes entry so the triage LLM sees everything transcribed across all
-    uploads), status stays "available" once ANY upload has succeeded."""
+    uploads), status stays "available" once ANY upload has succeeded.
+
+    `uploads` counts completed OCR attempts (incremented even on a blank/illegible read
+    that adds zero drugs) — schemas.PrescriptionOcr allows extra fields, so this passes
+    through untouched. The journey UI polls on this counter, not on drug_names growing,
+    since a legitimately-empty extraction must not be mistaken for "not landed yet"
+    (see HealthStep.tsx's pollForNewDrugs)."""
     if not existing or existing.get("status") != "available":
-        return new
+        return {**new, "uploads": 1}
     if new.get("status") != "available":
         return existing  # a later failed upload must not erase prior successful ones
     merged_drugs = list(existing.get("drug_names", []))
@@ -649,6 +655,7 @@ def _merge_prescription_ocr(existing: dict, new: dict) -> dict:
         "drug_names": merged_drugs,
         "icd_codes": merged_icd,
         "diagnosis_notes": [*existing.get("diagnosis_notes", []), *new.get("diagnosis_notes", [])],
+        "uploads": existing.get("uploads", 0) + 1,
     }
 
 

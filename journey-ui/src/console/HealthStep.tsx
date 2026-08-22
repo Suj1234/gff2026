@@ -1316,16 +1316,20 @@ function PrescriptionUpload({ appId, snap }: { appId: number | null; snap: AppSn
 
   // Poll for ONE upload to land, diffing against the drug list already known before this
   // upload started — so a merged record still tells us what THIS file specifically added.
-  async function pollForNewDrugs(priorDrugs: string[]): Promise<{ drugs: string[]; note?: string }> {
+  async function pollForNewDrugs(priorDrugs: string[], priorUploads: number): Promise<{ drugs: string[]; note?: string }> {
     if (appId == null) return { drugs: [] }
     for (let i = 0; i < 30; i++) {           // ~60s max wait per file, matches OCR's own timeout
       await new Promise((r) => setTimeout(r, 2000))
       try {
         const r = await fetch(`/api/journey/app/${appId}`)
         const d = (await r.json()) as AppSnapshot
-        const p = d?.signals?.prescription_ocr
-        if (p?.status === "available" || p?.status === "unavailable") {
-          if (p.status === "unavailable") return { drugs: [], note: "Couldn't read this file." }
+        const p = d?.signals?.prescription_ocr as (AppSnapshot["signals"]["prescription_ocr"] & { uploads?: number }) | undefined
+        if (p?.status === "unavailable") return { drugs: [], note: "Couldn't read this file." }
+        // `uploads` (server-side _merge_prescription_ocr) increments on every completed OCR
+        // attempt, even a blank/illegible one — unlike drug_names.length, it can't be
+        // mistaken for "still the previous upload's snapshot" when THIS upload legitimately
+        // reads zero new drugs (a repeat drug, or an unreadable image).
+        if (p?.status === "available" && (p.uploads ?? 0) > priorUploads) {
           const all = p.drug_names ?? []
           // Only what THIS upload newly contributed — a doc that repeats an already-known
           // drug (e.g. a refill) legitimately adds nothing new; don't misattribute another
@@ -1350,12 +1354,18 @@ function PrescriptionUpload({ appId, snap }: { appId: number | null; snap: AppSn
         const body = new FormData()
         body.append("app_id", String(appId))
         body.append("file", files[i])
+        // Baseline BEFORE this upload's POST — the server's own upload counter right now, so
+        // the poll can tell "still the previous upload's snapshot" apart from "this upload
+        // landed" (the record can already be status:"available" from an earlier upload
+        // before this one's OCR call even starts).
+        const before = await fetch(`/api/journey/app/${appId}`).then((x) => x.json()) as AppSnapshot
+        const priorUploads = (before?.signals?.prescription_ocr as { uploads?: number } | undefined)?.uploads ?? 0
         const r = await fetch("/api/journey/prescription", { method: "POST", body }).then((x) => x.json())
         if (!r.success) {
           setDocs((cur) => cur.map((d, j) => j === startIdx + i ? { ...d, status: "error", note: r.message || "Upload failed." } : d))
           continue
         }
-        const { drugs, note } = await pollForNewDrugs(priorDrugs)
+        const { drugs, note } = await pollForNewDrugs(priorDrugs, priorUploads)
         priorDrugs = [...priorDrugs, ...drugs]
         setDocs((cur) => cur.map((d, j) => j === startIdx + i
           ? { ...d, status: note && !drugs.length ? "error" : "done", drugs, note } : d))
