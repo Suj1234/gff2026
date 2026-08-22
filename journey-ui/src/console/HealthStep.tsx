@@ -748,12 +748,13 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
     QRCode.toDataURL(scanUrl, { width: 176, margin: 1 }).then(setQrDataUrl).catch(() => setQrDataUrl(""))
   }, [scanUrl])
 
-  // Demo escape hatch: Shift+D while the scan has failed fills the SAME clean-vitals mock
-  // the backend uses when NURALX_BASE_URL is unset, so a live-vendor hiccup mid-demo
-  // doesn't block the rest of the walkthrough. Client-side only — no network round-trip.
+  // Demo escape hatch: Shift+D — from the moment the QR is up (waiting for the applicant's
+  // phone) or after a failure — fills the SAME clean-vitals mock the backend uses when
+  // NURALX_BASE_URL is unset, so a slow/unreachable live vendor never blocks the demo.
+  // Client-side only — no network round-trip.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.shiftKey && e.key.toLowerCase() === "d" && state === "error") {
+      if (e.shiftKey && e.key.toLowerCase() === "d" && (state === "waiting" || state === "error")) {
         setRppg(DEMO_MOCK_RPPG)
         setLiveness({ status: "available", liveness_pass: true, liveness_score: 0.96, face_match_score: 0.94, deepfake_flag: false })
         setState("done")
@@ -959,6 +960,7 @@ function FaceScan({ appId, snap }: { appId: number | null; snap: AppSnapshot }) 
               <p className="mt-3 flex items-center gap-1.5 text-[12px] text-muted-foreground">
                 <Spinner weight="bold" className="size-3.5 animate-spin text-primary" /> Waiting for your phone…
               </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">Demo: press <kbd className="rounded border border-border bg-[#faf9f7] px-1 py-0.5 font-mono">Shift</kbd>+<kbd className="rounded border border-border bg-[#faf9f7] px-1 py-0.5 font-mono">D</kbd> to fill mock results.</p>
             </div>
           </div>
         ) : (
@@ -1211,7 +1213,7 @@ function AbhaFetch({ appId, snap }: { appId: number | null; snap: AppSnapshot })
                 className="w-full px-3 h-11 rounded-lg border border-input text-[14px] font-semibold outline-none bg-white focus:border-ring focus:ring-[3px] focus:ring-ring/30" />
             ) : (
               <input autoFocus inputMode="numeric" placeholder="14-1234-5678-9012" value={fmtAbha(abhaId)}
-                onChange={(e) => setAbhaId(e.target.value)}
+                onChange={(e) => setAbhaId(e.target.value.replace(/[^\d]/g, "").slice(0, 14))}
                 className="w-full px-3 h-11 rounded-lg border border-input text-[14px] font-semibold tabular-nums outline-none bg-white focus:border-ring focus:ring-[3px] focus:ring-ring/30" />
             )}
 
