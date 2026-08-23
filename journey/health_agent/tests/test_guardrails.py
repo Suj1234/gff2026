@@ -10,8 +10,19 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from journey.health_agent.config import CONDITION_BUCKETS
-from journey.health_agent.engine import run_condition_thread
+from journey.health_agent.engine import run_condition_thread as _run_condition_thread
 from journey.health_agent.signatures import NextAdaptiveQuestion
+
+
+def _verify_ok(label, info_targets, covered_targets, transcript):
+    """Default verify stub: always reports consistent — these tests exercise
+    injection/protected-characteristic guardrails, not Phase 2's verification step."""
+    return SimpleNamespace(is_consistent=True, problem=None, follow_up_question=None)
+
+
+def run_condition_thread(*args, verify_fn=None, **kwargs):
+    return _run_condition_thread(*args, verify_fn=verify_fn or _verify_ok, **kwargs)
+
 
 _JARGON_BLOCKLIST = [
     "onset", "current status", "severity marker", "complication",

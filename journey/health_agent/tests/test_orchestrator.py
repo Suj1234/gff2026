@@ -7,7 +7,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from journey.health_agent.config import CONDITION_BUCKETS, MAX_SECOND_PASS_BUCKETS
-from journey.health_agent.engine import run_all_threads
+from journey.health_agent.engine import run_all_threads as _run_all_threads
+
+
+def _verify_ok(label, info_targets, covered_targets, transcript):
+    """Default verify stub: always reports consistent — these tests exercise the
+    second-pass/volunteered-condition orchestration, not Phase 2's verification step."""
+    return SimpleNamespace(is_consistent=True, problem=None, follow_up_question=None)
+
+
+def run_all_threads(*args, verify_fn=None, **kwargs):
+    return _run_all_threads(*args, verify_fn=verify_fn or _verify_ok, **kwargs)
 
 
 def _immediate_complete(unprompted=None):

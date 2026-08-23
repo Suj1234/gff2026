@@ -142,6 +142,10 @@ def test_health_agent_endpoints_end_to_end(monkeypatch):
                                 is_complete=True, is_terminal=False, question=None)
     monkeypatch.setattr(engine, "_real_next_question", fake_next_question)
 
+    def fake_verify(label, info_targets, covered_targets, transcript):
+        return SimpleNamespace(is_consistent=True, problem=None, follow_up_question=None)
+    monkeypatch.setattr(engine, "_real_verify", fake_verify)
+
     def fake_summarize(label, transcript, ended_reason, uncovered):
         return SimpleNamespace(onset="2020", current_status="controlled", treatment="amlodipine",
                                 severity_notes=None, free_text_summary="Controlled hypertension since 2020.")

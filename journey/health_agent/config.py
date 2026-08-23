@@ -31,6 +31,9 @@ CONDITION_BUCKETS: dict[str, dict] = {
         ],
         "info_targets": [
             "onset (when first diagnosed, or approx. duration if unsure)",
+            "type of condition, in plain terms (e.g. heart attack, angina, irregular "
+            "heartbeat/arrhythmia, valve issue, or other — a lay description is enough, "
+            "never press for a clinical diagnosis they may not know)",
             "current status (active / resolved / in remission / recurring — and if not "
             "active, when and how it resolved)",
             "current treatment (medication + dosage, or 'none' if resolved/untreated)",
@@ -68,6 +71,8 @@ CONDITION_BUCKETS: dict[str, dict] = {
             "onset (when this started)",
             "current status (active / resolved / seasonal-only)",
             "current treatment (inhaler / medication / none)",
+            "frequency/trigger (how often it flares up, and what tends to set it off — "
+            "e.g. exercise, allergy, seasonal, unknown)",
             "severity markers (any hospitalization or ER visit for a breathing attack)",
         ],
     },
@@ -86,6 +91,8 @@ CONDITION_BUCKETS: dict[str, dict] = {
         # Never triggered by face-scan/vitals — those don't diagnose mental health.
         "info_targets": [
             "onset (when treatment was first sought)",
+            "type of condition, in plain terms as the applicant describes it (e.g. anxiety, "
+            "depression, or other — never press for a clinical diagnosis they may not know)",
             "current status (active / resolved / in remission)",
             "current treatment (medication and/or therapy, or none)",
             "severity markers (any hospitalization ever related to this)",
@@ -120,12 +127,16 @@ CONDITION_BUCKETS: dict[str, dict] = {
     },
 }
 
-MAX_TURNS_PER_CONDITION = 5  # hard cap on turns, NOT on which/how many facts fill per turn
-# Was 4; bumped to 5 (2026-08-21) after the live Gemini smoke test showed a thorough,
-# well-answered cardiac conversation (5 info_targets, the max of any bucket) can
-# legitimately need a 5th turn to cover severity + control/stability separately —
-# hitting the cap on a GOOD conversation isn't the intended failure mode; the cap is
-# meant to catch a model that never converges, not to truncate a conversation going well.
+MAX_TURNS_PER_CONDITION = 6  # hard cap on turns, NOT on which/how many facts fill per turn
+# Was 4, then 5 (2026-08-21) after the live Gemini smoke test showed a thorough,
+# well-answered cardiac conversation (then 5 info_targets, the max of any bucket) can
+# legitimately need a matching number of turns — hitting the cap on a GOOD conversation
+# isn't the intended failure mode; the cap is meant to catch a model that never converge,
+# not to truncate a conversation going well. Bumped to 6 (2026-08-23) after cardiac and
+# mental_health each grew a "type of condition" target and respiratory grew a
+# frequency/trigger target (now 6/6/5 targets respectively) — same reasoning, kept in
+# lockstep with the largest bucket's target count so the cap still only catches a model
+# that never converges.
 MAX_CONDITIONS_PROBED = 4  # cap total conditions probed in one triage pass (cost + fatigue)
 MAX_SECOND_PASS_BUCKETS = 2  # cap on new buckets from the volunteered-condition catch-all (§4.2)
 

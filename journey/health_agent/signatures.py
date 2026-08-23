@@ -177,6 +177,44 @@ class NextAdaptiveQuestion(dspy.Signature):
     question: Optional[str] = dspy.OutputField(desc="the single next question; empty if is_complete or is_terminal")
 
 
+class VerifyThreadComplete(dspy.Signature):
+    """`NextAdaptiveQuestion` just reported every target covered and this condition
+    thread is about to close. Before it does, act as a second, independent reviewer —
+    do not simply trust the prior turn's own judgment. Re-read the WHOLE conversation
+    and check for two distinct problems:
+
+    1. INTERNAL CONTRADICTION — do any two answers conflict? The clearest example: a
+       resolution/end date that falls BEFORE the stated onset date (e.g. "started in
+       2021" then later "resolved in 2015" — 2015 is before 2021, impossible). Other
+       examples: claiming a condition is "resolved" while also saying they're currently
+       on medication for it with no explanation; stating two different onset years for
+       the same event with no clarification of which is right.
+    2. TARGET MARKED COVERED BUT NOT ACTUALLY ANSWERED — a target the prior turn
+       claims is covered, but the transcript shows no genuine answer for it (this is
+       different from an imprecise-but-genuine answer, which IS sufficient — only flag
+       a target that was never actually addressed at all).
+
+    Do NOT flag normal human imprecision ("around 2019," "some tablets, don't remember
+    the name") — that is genuine and sufficient, not a problem. Only flag a REAL
+    contradiction or a target that was never actually addressed. If you find a problem,
+    write ONE plain-language follow-up question that would resolve it — using the same
+    plain-language rule as the interview itself: no clinical terms, just how a person
+    would naturally ask for clarification (e.g. "Just to double check — you mentioned
+    it started in 2021 but resolved in 2015, could you help me get the dates right?").
+    If everything checks out, confirm it's fine and leave follow_up_question empty."""
+
+    condition_label: str = dspy.InputField()
+    info_targets: list[str] = dspy.InputField()
+    covered_targets: list[str] = dspy.InputField(desc="targets the prior turn claims are covered")
+    conversation_so_far: list[dict] = dspy.InputField(desc="[{q, a}, ...] the full transcript to check")
+
+    is_consistent: bool = dspy.OutputField(desc="false iff a real contradiction or an unaddressed target was found")
+    problem: Optional[str] = dspy.OutputField(desc="plain description of what's wrong; empty if is_consistent")
+    follow_up_question: Optional[str] = dspy.OutputField(
+        desc="one plain-language question resolving the problem; empty if is_consistent"
+    )
+
+
 class SummarizeConditionThread(dspy.Signature):
     """Turn a completed (or turn-cap-terminated) condition conversation into a
     structured summary a human underwriter can scan in 5 seconds. Extract ONLY what the

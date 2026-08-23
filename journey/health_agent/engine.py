@@ -38,11 +38,17 @@ from .config import (
     MAX_TURNS_PER_CONDITION,
 )
 from .lm import configure_lm
-from .signatures import NextAdaptiveQuestion, SummarizeConditionThread, TriageConditions
+from .signatures import (
+    NextAdaptiveQuestion,
+    SummarizeConditionThread,
+    TriageConditions,
+    VerifyThreadComplete,
+)
 
 _LM_READY = configure_lm()
 _triage_module = dspy.ChainOfThought(TriageConditions)
 _next_question_module = dspy.ChainOfThought(NextAdaptiveQuestion)
+_verify_module = dspy.ChainOfThought(VerifyThreadComplete)
 _summarize_module = dspy.ChainOfThought(SummarizeConditionThread)
 
 _KNOWN_BUCKETS = set(CONDITION_BUCKETS)
@@ -90,6 +96,21 @@ def _real_next_question(
         conversation_so_far=conversation_so_far,
         turns_used=turns_used,
         max_turns=max_turns,
+    )
+
+
+def _real_verify(
+    condition_label: str,
+    info_targets: list[str],
+    covered_targets: list[str],
+    conversation_so_far: list[dict],
+):
+    _require_lm()
+    return _verify_module(
+        condition_label=condition_label,
+        info_targets=info_targets,
+        covered_targets=covered_targets,
+        conversation_so_far=conversation_so_far,
     )
 
 
@@ -176,6 +197,7 @@ def new_thread_state(bucket_key: str, trigger_fact: str) -> dict:
         "fallback_asked": [],
         "unprompted_conditions": [],
         "turns_used": 0,
+        "verify_attempted": False,  # VerifyThreadComplete runs at most once per thread
         "done": False,
         "ended_reason": None,   # 'complete' | 'turn_cap' once done
         "next_question": None,  # the question awaiting an answer, or None once done
@@ -188,6 +210,7 @@ def step_thread(
     answer: Optional[str],
     *,
     next_question_fn: Optional[Callable] = None,
+    verify_fn: Optional[Callable] = None,
     summarize_fn: Optional[Callable] = None,
 ) -> dict:
     """ONE TURN of one condition thread — pure function, plain-dict state in, updated
@@ -204,6 +227,7 @@ def step_thread(
     not as mutable default arguments — see `run_triage`'s docstring for why a
     `= _real_next_question` default would break `monkeypatch.setattr` in tests."""
     next_question_fn = next_question_fn or _real_next_question
+    verify_fn = verify_fn or _real_verify
     summarize_fn = summarize_fn or _real_summarize
     if state["done"]:
         return state  # calling step_thread again on a finished thread is a no-op
@@ -222,7 +246,7 @@ def step_thread(
 
     uncovered = [t for t in targets if t not in covered]
     if not uncovered:
-        return _close_out_thread(state, targets, covered, "complete", summarize_fn)
+        return _verify_then_close_or_ask(state, bucket, targets, covered, verify_fn, summarize_fn)
 
     try:
         step = next_question_fn(bucket["label"], state["trigger_fact"], targets,
@@ -230,9 +254,12 @@ def step_thread(
         state["unprompted_conditions"].extend(step.unprompted_conditions)  # never dropped
         covered.update(t for t in step.covered_targets if t in targets)  # ignore invented names
         state["covered"] = sorted(covered)
-        if step.is_complete or step.is_terminal:
-            reason = "complete" if not ([t for t in targets if t not in covered]) or step.is_complete else "turn_cap"
-            return _close_out_thread(state, targets, covered, reason, summarize_fn)
+        if step.is_terminal:
+            return _close_out_thread(state, targets, covered, "turn_cap", summarize_fn)
+        if step.is_complete:
+            if not [t for t in targets if t not in covered]:
+                return _verify_then_close_or_ask(state, bucket, targets, covered, verify_fn, summarize_fn)
+            return _close_out_thread(state, targets, covered, "turn_cap", summarize_fn)
         state["next_question"] = step.question
     except Exception:
         # LLM failure -> ask about the next still-uncovered target NOT already asked via
@@ -246,6 +273,27 @@ def step_thread(
         state["fallback_asked"].append(target)
         state["next_question"] = f"Could you tell me more about: {target}?"
     return state
+
+
+def _verify_then_close_or_ask(state: dict, bucket: dict, targets: list[str], covered: set[str],
+                               verify_fn: Callable, summarize_fn: Callable) -> dict:
+    """Every target looks covered — before closing, run ONE independent check for
+    contradictions (e.g. a resolution date before the onset date) or a target the prior
+    turn marked covered but the transcript never actually addressed. Runs at most once
+    per thread (`verify_attempted`), so a second pass never re-litigates the same
+    thread or turns this into an unbounded back-and-forth. Fails open on any verifier
+    error — a broken guardrail call must never block a thread from ever closing."""
+    if state["verify_attempted"]:
+        return _close_out_thread(state, targets, covered, "complete", summarize_fn)
+    state["verify_attempted"] = True
+    try:
+        result = verify_fn(bucket["label"], targets, sorted(covered), state["transcript"])
+        if not result.is_consistent and result.follow_up_question:
+            state["next_question"] = result.follow_up_question
+            return state
+    except Exception:
+        pass  # fail open — a broken verifier must never block closing
+    return _close_out_thread(state, targets, covered, "complete", summarize_fn)
 
 
 def _close_out_thread(state: dict, targets: list[str], covered: set[str], reason: str,
@@ -281,6 +329,7 @@ def run_condition_thread(
     answer_callback: Callable[[str], str],
     *,
     next_question_fn: Optional[Callable] = None,
+    verify_fn: Optional[Callable] = None,
     summarize_fn: Optional[Callable] = None,
 ) -> dict:
     """Drives one condition's conversation to completion by looping `step_thread`.
@@ -290,10 +339,12 @@ def run_condition_thread(
     request, since a server can't block one function call across HTTP requests the way
     this synchronous loop can in a test."""
     state = new_thread_state(bucket_key, trigger_fact)
-    state = step_thread(state, None, next_question_fn=next_question_fn, summarize_fn=summarize_fn)
+    state = step_thread(state, None, next_question_fn=next_question_fn, verify_fn=verify_fn,
+                         summarize_fn=summarize_fn)
     while not state["done"]:
         answer = answer_callback(state["next_question"])
-        state = step_thread(state, answer, next_question_fn=next_question_fn, summarize_fn=summarize_fn)
+        state = step_thread(state, answer, next_question_fn=next_question_fn, verify_fn=verify_fn,
+                             summarize_fn=summarize_fn)
     return {
         "bucket": state["bucket"],
         "trigger_fact": state["trigger_fact"],
@@ -315,6 +366,7 @@ def run_all_threads(
     *,
     triage_fn: Optional[Callable] = None,
     next_question_fn: Optional[Callable] = None,
+    verify_fn: Optional[Callable] = None,
     summarize_fn: Optional[Callable] = None,
 ) -> list[dict]:
     """Runs one thread per triage-flagged bucket, then a SINGLE bounded second pass for
@@ -324,7 +376,8 @@ def run_all_threads(
     through the SAME evidence-based reasoning as the original call."""
     results = [
         run_condition_thread(f["bucket"], f["trigger_fact"], answer_callback,
-                              next_question_fn=next_question_fn, summarize_fn=summarize_fn)
+                              next_question_fn=next_question_fn, verify_fn=verify_fn,
+                              summarize_fn=summarize_fn)
         for f in flagged
     ]
     already_run = {r["bucket"] for r in results}
@@ -337,7 +390,8 @@ def run_all_threads(
         new_buckets = [f for f in second_pass if f["bucket"] not in already_run][:MAX_SECOND_PASS_BUCKETS]
         results += [
             run_condition_thread(f["bucket"], f["trigger_fact"], answer_callback,
-                                  next_question_fn=next_question_fn, summarize_fn=summarize_fn)
+                                  next_question_fn=next_question_fn, verify_fn=verify_fn,
+                                  summarize_fn=summarize_fn)
             for f in new_buckets
         ]
         # A second-pass thread that itself surfaces a THIRD volunteered condition does

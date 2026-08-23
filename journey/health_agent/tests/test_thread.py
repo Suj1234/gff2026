@@ -1,8 +1,8 @@
 """test_thread.py — Phase 2 adaptive per-condition conversation (HEALTH_AGENT_PLAN.md
-§4, §9). All offline: `next_question_fn`/`summarize_fn` are plain Python functions
-returning `SimpleNamespace` objects that mimic the shape of a real DSPy prediction
-(`.covered_targets`, `.unprompted_conditions`, `.is_complete`, `.is_terminal`,
-`.question` / `.onset` etc.) — no network, no LLM.
+§4, §9). All offline: `next_question_fn`/`verify_fn`/`summarize_fn` are plain Python
+functions returning `SimpleNamespace` objects that mimic the shape of a real DSPy
+prediction (`.covered_targets`, `.unprompted_conditions`, `.is_complete`, `.is_terminal`,
+`.question` / `.onset` / `.is_consistent` etc.) — no network, no LLM.
 """
 
 from __future__ import annotations
@@ -10,7 +10,20 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from journey.health_agent.config import CONDITION_BUCKETS, MAX_TURNS_PER_CONDITION
-from journey.health_agent.engine import run_condition_thread
+from journey.health_agent.engine import run_condition_thread as _run_condition_thread
+
+
+def _verify_ok(label, info_targets, covered_targets, transcript):
+    """Default verify stub: always reports consistent, so tests that don't care about
+    Phase-2 verification behave exactly as they did before it existed."""
+    return SimpleNamespace(is_consistent=True, problem=None, follow_up_question=None)
+
+
+def run_condition_thread(*args, verify_fn=None, **kwargs):
+    """Thin wrapper defaulting `verify_fn` to the always-consistent stub — every test in
+    this file that doesn't explicitly test verification behavior should be unaffected by
+    Phase 2's new step, not silently hit the real LLM gateway."""
+    return _run_condition_thread(*args, verify_fn=verify_fn or _verify_ok, **kwargs)
 
 
 def _summary_stub(onset=None, current_status=None, treatment=None, severity_notes=None,
@@ -238,3 +251,104 @@ def test_volunteered_condition_recorded_even_on_early_terminal_exit():
         next_question_fn=next_question_fn, summarize_fn=_summary_stub(),
     )
     assert result["unprompted_conditions"] == ["mentioned thyroid issue too"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — independent verification before close-out catches contradictions
+# (the "resolved 2015, started 2021" bug report) and thin/unaddressed targets.
+# ---------------------------------------------------------------------------
+def test_verify_catches_contradiction_and_asks_one_more_question():
+    """The exact bug report: onset stated as 2021, then a later answer claims the
+    condition resolved in 2015 — before it even started. next_question_fn (self-graded)
+    marks everything covered anyway; the independent verifier must catch it and force
+    one more clarifying question instead of letting the thread close."""
+    targets = CONDITION_BUCKETS["cardiac"]["info_targets"]
+
+    def next_question_fn(label, trigger, info_targets, transcript, turns, max_turns):
+        # Self-graded: always says complete, oblivious to the date contradiction.
+        return SimpleNamespace(covered_targets=list(info_targets), unprompted_conditions=[],
+                                is_complete=True, is_terminal=False, question=None)
+
+    verify_calls = {"n": 0}
+    def verify_fn(label, info_targets, covered_targets, transcript):
+        verify_calls["n"] += 1
+        return SimpleNamespace(
+            is_consistent=False,
+            problem="resolution date (2015) is before the stated onset date (2021)",
+            follow_up_question="Just to double check — you mentioned it started in 2021 "
+                                "but resolved in 2015, could you help me get the dates right?",
+        )
+
+    result = run_condition_thread(
+        "cardiac", "trigger", lambda q: "2021 / resolved 2015",
+        next_question_fn=next_question_fn, verify_fn=verify_fn, summarize_fn=_summary_stub(),
+    )
+    assert verify_calls["n"] == 1
+    # the clarifying question must actually have been asked, not silently dropped:
+    assert any("double check" in t["q"].lower() for t in result["transcript"])
+
+
+def test_verify_confirms_consistent_thread_closes_normally():
+    """A clean, consistent thread must close exactly as it did before Phase 2 —
+    verification adds one call, not extra friction, when nothing is actually wrong."""
+    targets = CONDITION_BUCKETS["hypertension"]["info_targets"]
+
+    def next_question_fn(label, trigger, info_targets, transcript, turns, max_turns):
+        return SimpleNamespace(covered_targets=list(info_targets), unprompted_conditions=[],
+                                is_complete=True, is_terminal=False, question=None)
+
+    verify_calls = {"n": 0}
+    def verify_fn(label, info_targets, covered_targets, transcript):
+        verify_calls["n"] += 1
+        return SimpleNamespace(is_consistent=True, problem=None, follow_up_question=None)
+
+    result = run_condition_thread(
+        "hypertension", "trigger", lambda q: "2020, controlled on amlodipine",
+        next_question_fn=next_question_fn, verify_fn=verify_fn, summarize_fn=_summary_stub(),
+    )
+    assert verify_calls["n"] == 1
+    assert result["ended_reason"] == "complete"
+
+
+def test_verify_only_intervenes_once_never_loops():
+    """Even if the applicant's clarifying answer is STILL inconsistent, verification
+    must not run a second time on the same thread — bounded, not an endless back-and-
+    forth. The thread closes on the second natural completion regardless."""
+    targets = CONDITION_BUCKETS["cardiac"]["info_targets"]
+
+    def next_question_fn(label, trigger, info_targets, transcript, turns, max_turns):
+        return SimpleNamespace(covered_targets=list(info_targets), unprompted_conditions=[],
+                                is_complete=True, is_terminal=False, question=None)
+
+    verify_calls = {"n": 0}
+    def verify_fn(label, info_targets, covered_targets, transcript):
+        verify_calls["n"] += 1
+        return SimpleNamespace(is_consistent=False, problem="still inconsistent",
+                                follow_up_question="Could you clarify the dates again?")
+
+    answers = iter(["2021 / resolved 2015", "still not sure, maybe 2016"])
+    result = run_condition_thread(
+        "cardiac", "trigger", lambda q: next(answers, "ok"),
+        next_question_fn=next_question_fn, verify_fn=verify_fn, summarize_fn=_summary_stub(),
+    )
+    assert verify_calls["n"] == 1  # never re-triggered on the same thread
+    assert result["ended_reason"] == "complete"
+
+
+def test_verify_failure_fails_open_and_closes_normally():
+    """If the verifier call itself errors (LLM/gateway failure), the thread must still
+    close — a broken guardrail call must never block completion."""
+    targets = CONDITION_BUCKETS["diabetes"]["info_targets"]
+
+    def next_question_fn(label, trigger, info_targets, transcript, turns, max_turns):
+        return SimpleNamespace(covered_targets=list(info_targets), unprompted_conditions=[],
+                                is_complete=True, is_terminal=False, question=None)
+
+    def always_fail_verify(*a, **kw):
+        raise RuntimeError("gateway down")
+
+    result = run_condition_thread(
+        "diabetes", "trigger", lambda q: "ok",
+        next_question_fn=next_question_fn, verify_fn=always_fail_verify, summarize_fn=_summary_stub(),
+    )
+    assert result["ended_reason"] == "complete"
