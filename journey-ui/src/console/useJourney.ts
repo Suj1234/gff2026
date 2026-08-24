@@ -24,8 +24,8 @@ export type Signals = {
     statuses?: string[]; turnover_slab?: string; registration_date?: string
     nature_of_business?: string[]; trade_name?: string }
   litigation_fir?: {
-    status?: string; total_cases?: number; firs_registered?: number; pending_cases?: number
-    confidence?: string
+    status?: string; total_cases?: number; criminal_cases?: number
+    firs_registered?: number; pending_cases?: number; confidence?: string
     cases?: { type?: string; civil_criminal?: string; severity?: string; status?: string; cheque_bounce?: boolean }[]
   }
   mca_director?: { director_default?: boolean }

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import type { AppSnapshot, Rail } from "./useJourney"
-import { RailBody, Gauge, railTone, railRows } from "./AgentRail"
+import { RailBody, LitigationCard, Gauge, railTone, railRows } from "./AgentRail"
 import { CaretUp } from "@phosphor-icons/react"
 
 // Mobile-only Agent Read: a sticky bottom bar (score + band) that expands into the
@@ -23,8 +23,9 @@ export function RailSheet({ rail, snap }: { rail: Rail | null; snap?: AppSnapsho
       <div className="fixed inset-x-0 bottom-0 z-50">
         {/* expanded panel */}
         {open && (
-          <div className="mx-auto max-h-[70dvh] overflow-y-auto rounded-t-2xl border-t bg-white shadow-[0_-8px_40px_rgba(0,0,0,0.15)] animate-fade-up">
-            <RailBody rail={rail} snap={snap} />
+          <div className="mx-auto max-h-[70dvh] overflow-y-auto rounded-t-2xl border-t bg-white shadow-[0_-8px_40px_rgba(0,0,0,0.15)] animate-fade-up space-y-3 p-0">
+            <RailBody rail={rail} />
+            <div className="px-0 pb-3"><LitigationCard snap={snap ?? null} /></div>
           </div>
         )}
         {/* summary bar (always visible) */}
