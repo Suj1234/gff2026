@@ -115,8 +115,10 @@ export function RailBody({ rail }: { rail: Rail | null }) {
                   {g.severity === "idle" || g.gate ? "—" : Math.round(g.sub_score)}
                 </span>
               </div>
-              {/* One flag per line (scorer joins reasons with "; ") — a wall of text reads as noise. */}
-              {g.severity === "idle" || !g.why?.includes("; ") ? (
+              {/* One flag per line (scorer joins reasons with "; ") — a wall of text reads as noise.
+                  Clean rows ("ok") don't show their reason text — a green dot + 100 already says
+                  fine; only flagged rows need the "why". */}
+              {g.severity === "ok" ? null : g.severity === "idle" || !g.why?.includes("; ") ? (
                 <p className="mt-1 text-[12px] text-muted-foreground leading-snug pl-4">{g.why}</p>
               ) : (
                 <ul className="mt-1 pl-4 space-y-0.5">
