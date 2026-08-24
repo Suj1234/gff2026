@@ -79,7 +79,7 @@
     "decision": "REFER",
     "expected_outcome": "GREY-ZONE",
     "expected_bre_outcome": "GREY-ZONE",
-    "expected_flag_types": ["non_disclosure_signal", "ckyc_mismatch", "adverse_litigation"],
+    "expected_flag_types": ["non_disclosure_signal", "ckyc_mismatch"],
     "expected_rulings": [
       { "flag_type": "non_disclosure_signal", "related_rule": "R-010" }
     ]

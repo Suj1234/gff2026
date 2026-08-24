@@ -233,7 +233,6 @@ CLUSTER_FLAG_TYPES = frozenset({
     "moderate_ml_score",
     "velocity_anomaly",
     "non_disclosure_signal",
-    "adverse_litigation",
     # LIFE moral-hazard flags:
     "over_insurance",             # R-F2/R-F3: SA above HLV/income-multiple or PAN-aggregate
     "cover_stacking",             # R-F3: aggregate in-force cover breaches the cap
@@ -259,10 +258,12 @@ SAFETY_SCORE_WEIGHTS = {
     "lifestyle": 0.08,
     "velocity_graph": 0.06,
     "insurance_portfolio": 0.06,
-    "litigation_fir": 0.05,
     "contactability": 0.04,
     "geography": 0.03,
-}  # sum = 1.00  # TODO(underwriting-manual): calibrate against labeled outcomes
+}  # sum = 0.95; safety_score() renormalizes over assessed weight so this still spans 0-100
+# TODO(underwriting-manual): calibrate against labeled outcomes
+# Litigation/FIR is name-based (unreliable match) and is NOT scored into Safety Score —
+# shown as its own informational card instead (see report.py litigation_fir passthrough).
 
 # Bands (higher = safer).  (low, high) inclusive ranges.
 SAFETY_BANDS = [

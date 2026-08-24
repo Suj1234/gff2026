@@ -67,7 +67,6 @@ _GROUP_TO_SECTION = {
     "medical": "medical_evaluation",
     "velocity_graph": "velocity_graph",
     "geography": "geography",
-    "litigation_fir": "litigation_fir",
     "fraud_check": "fraud_check",
     "insurance_portfolio": "insurance_portfolio_iib",
 }

@@ -28,7 +28,7 @@ export function railRows(rail: Rail | null): RailGroup[] {
   //                          Previously this fell through to the placeholder and showed the
   //                          Step-1 chip list on Step 4 (the bug).
   const rows = rail == null
-    ? ["Identity / KYC", "Occupation", "Litigation", "Contactability"].map((label) => ({
+    ? ["Identity / KYC", "Occupation", "Contactability"].map((label) => ({
         key: label, label, sub_score: 0, severity: "idle" as const, why: "awaiting source",
       }))
     : rail.groups
@@ -156,7 +156,7 @@ export function RailBody({ rail }: { rail: Rail | null }) {
 // Desktop / tablet rail column. Shown lg+ (desktop) and md (tablet) via the caller's grid.
 export function AgentRail({ rail, className = "" }: { rail: Rail | null; className?: string }) {
   return (
-    <aside className={`shrink-0 self-start sticky top-14 ${className}`} aria-label="What the agent sees">
+    <aside className={`shrink-0 self-start sticky top-[92px] ${className}`} aria-label="What the agent sees">
       <div className="rounded-2xl border bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
         <RailBody rail={rail} />
       </div>

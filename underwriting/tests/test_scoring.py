@@ -124,8 +124,9 @@ def test_rohit_safety_score_is_65_high():
     ss, rows, total = safety_score(inp, bre)
     assert ss.band == "High Risk", (ss.value, ss.band)
     assert 60 <= ss.value <= 70, f"Rohit safety score {ss.value} not ~65"
-    # from the §4A weight table exactly
-    assert abs(total["sum_of_weights"] - 1.0) < 1e-9
+    # from the §4A weight table exactly (litigation_fir excluded — not scored, its own
+    # informational card instead — so the assessed weight is 0.95, not 1.0)
+    assert abs(total["sum_of_weights"] - 0.95) < 1e-9
     assert total["computed_safety_score"] == ss.value
 
 
@@ -229,36 +230,25 @@ def _row(rows, group):
     return next(r for r in rows if r.source_group == group)
 
 
-def test_litigation_criminal_is_not_scored_clean():
-    """A1 silent-miss fix: a bundle with criminal litigation must score the
-    litigation_fir group BELOW clean (was 100 = 'no adverse litigation')."""
+def test_litigation_is_not_in_the_safety_score_composite():
+    """Litigation/FIR is a NAME-BASED match (unreliable identifier) — it is shown as its
+    own informational card, never scored into the Safety Score composite, regardless of
+    what's on record (see underwriting/config.py SAFETY_SCORE_WEIGHTS)."""
     from underwriting.tests.test_rules import _sig
     from underwriting.schemas import ProposalInput
 
-    def _inp(lit):
-        base = ProposalInput(**{
-            "proposal_id": "LIT", "application": {
-                "applicant": {"name": "Test User", "dob": "1990-01-01", "age": 34,
-                              "address": "1 Main St, City, 560001"},
-                "product": {"type": "individual_health", "sum_assured": 2500000},
-                "declared_pep": False, "health_declaration": {"conditions": []}},
-        })
-        base.signals = _sig(**({"litigation_fir": lit} if lit else {}))
-        return base
-
-    crim = _inp({"status": "available", "criminal_cases": 3, "firs_registered": 1,
-                 "cases": [{"civil_criminal": "criminal"}, {"civil_criminal": "criminal"}]})
-    clean = _inp(None)
-    _, rows_c, _ = safety_score(crim, run_bre(crim))
-    _, rows_z, _ = safety_score(clean, run_bre(clean))
-    # Criminal litigation present → assessed and scored below clean.
-    crim_row = _row(rows_c, "litigation_fir")
-    assert crim_row.assessed and crim_row.risk_sub_score < 100
-    # Absent litigation source → NOT ASSESSED (was the bug: it read 100/clean, which
-    # asserted "no adverse litigation" on a source that was never checked). It is now
-    # excluded from the composite rather than counted as a clean 'Low'.
-    zero_row = _row(rows_z, "litigation_fir")
-    assert not zero_row.assessed, "absent litigation must be not-assessed, not clean-100"
+    base = ProposalInput(**{
+        "proposal_id": "LIT", "application": {
+            "applicant": {"name": "Test User", "dob": "1990-01-01", "age": 34,
+                          "address": "1 Main St, City, 560001"},
+            "product": {"type": "individual_health", "sum_assured": 2500000},
+            "declared_pep": False, "health_declaration": {"conditions": []}},
+    })
+    base.signals = _sig(litigation_fir={
+        "status": "available", "criminal_cases": 3, "firs_registered": 1,
+        "cases": [{"civil_criminal": "criminal"}, {"civil_criminal": "criminal"}]})
+    _, rows, _ = safety_score(base, run_bre(base))
+    assert not any(r.source_group == "litigation_fir" for r in rows)
 
 
 def test_absent_source_is_not_assessed_not_clean():

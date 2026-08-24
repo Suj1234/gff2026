@@ -768,22 +768,21 @@ def test_r019_does_not_fire_without_alerts():
 
 
 # ===========================================================================
-# DONE-WHEN (Phase A): a self-employed bundle with criminal litigation → REFER
-# (not clean). Proven at the deterministic level — run_bre → GREY-ZONE, and the
-# no-LLM decision mapper resolves that to REFER.
+# Litigation/FIR is a NAME-BASED match (unreliable identifier) — it is informational
+# only (its own UI card) and must NOT affect the BRE outcome or the decision, even
+# when criminal cases/FIRs are on record. r018_litigation() itself still computes the
+# flag (used by the informational card's data), but run_bre() no longer collects it.
 # ===========================================================================
-def test_self_employed_criminal_litigation_refers_not_clean():
+def test_criminal_litigation_does_not_route_grey_zone_or_refer():
     from underwriting.decision import map_decision
 
-    # An otherwise-clean self-employed bundle, but with criminal litigation on record
-    # (the Paulson story). _clean_input + _sig with the litigation_fir source added.
     inp = _clean_input()
     inp.signals = _sig(litigation_fir={
         "status": "available", "criminal_cases": 10, "firs_registered": 1,
         "cases": [_crim_case()], "confidence": True,
     })
     bre = rules.run_bre(inp)
-    assert bre.outcome == "GREY-ZONE"
-    assert any(f.flag_type == "adverse_litigation" for f in bre.soft_flags)
-    decision = map_decision(bre)  # no LLM rulings → deterministic grey-zone edge
-    assert decision.verdict == "REFER", decision.reason_summary
+    assert not any(f.flag_type == "adverse_litigation" for f in bre.soft_flags)
+    assert bre.outcome != "GREY-ZONE"
+    decision = map_decision(bre)
+    assert decision.verdict != "REFER", decision.reason_summary

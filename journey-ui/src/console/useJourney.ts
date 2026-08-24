@@ -23,7 +23,11 @@ export type Signals = {
   gst?: { status?: string; gstin?: string; gstin_count?: number; any_cancelled?: boolean
     statuses?: string[]; turnover_slab?: string; registration_date?: string
     nature_of_business?: string[]; trade_name?: string }
-  litigation_fir?: Record<string, unknown>
+  litigation_fir?: {
+    status?: string; total_cases?: number; firs_registered?: number; pending_cases?: number
+    confidence?: string
+    cases?: { type?: string; civil_criminal?: string; severity?: string; status?: string; cheque_bounce?: boolean }[]
+  }
   mca_director?: { director_default?: boolean }
   email_intel?: { email?: string }
   aadhaar_ekyc?: { status?: string; name?: string; dob?: string; address?: string; photo?: boolean }

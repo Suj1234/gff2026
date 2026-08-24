@@ -657,21 +657,6 @@ def _s_geography(inp, bre, flags) -> tuple[float, list[str], bool]:
     return _result(p, g.available, "pincode not a hotspot, morbidity in range")
 
 
-def _s_litigation(inp, bre, flags) -> tuple[float, list[str], bool]:
-    sig = inp.signals
-    lit = (sig.model_extra or {}).get("litigation_fir")
-    p = []
-    assessed = isinstance(lit, dict) and lit.get("status") == "available"
-    if isinstance(lit, dict):
-        crim = sum(1 for c in lit.get("cases", []) if c.get("civil_criminal") == "criminal")
-        firs = lit.get("firs_registered", 0) or 0
-        if crim:
-            p.append((min(15 * crim, 30), f"{crim} criminal case(s)"))
-        if firs:
-            p.append((min(20 * firs, 40), f"{firs} FIR(s) registered"))
-    return _result(p, assessed, "no adverse litigation on record")
-
-
 def _s_fraud_check(inp, bre, flags) -> tuple[float, list[str], bool]:
     """Reflects the fraud risk score + authenticity flags (not identity-fraud gate)."""
     rs = risk_scores(inp, bre)
@@ -720,7 +705,6 @@ _SOURCE_SCORERS = {
     "medical": _s_medical,
     "velocity_graph": _s_velocity,
     "geography": _s_geography,
-    "litigation_fir": _s_litigation,
     "fraud_check": _s_fraud_check,
     "insurance_portfolio": _s_insurance_portfolio,
 }

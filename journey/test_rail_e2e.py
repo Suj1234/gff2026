@@ -42,7 +42,6 @@ def _offline_judge(evidence_bundle, flags, follow_up_observations=None):
     # bundle path per flag so the grounding gate passes rather than fabricating REFER.
     _cite = {
         "non_disclosure_signal": ["signals.abha_health_records.icd_codes"],
-        "adverse_litigation": ["signals.litigation_fir.cases"],
         "gst_alert": ["signals.gst.activeAlerts"],
     }
     out = []
@@ -110,17 +109,14 @@ def test_full_walk_rail_is_live_and_matches_decision():
     # -- STEP SCOPING: Step 1 shows only Step-1 groups; NOT financial/medical/lifestyle --
     s1 = _by_group(_rail(c, app_id, step=1))
     assert s1, "rail returned no groups on a live session"
-    assert "identity_kyc" in s1 and "litigation_fir" in s1, sorted(s1)
+    # Litigation is name-based (unreliable match) — it's a standalone informational card
+    # on Step 1, not a scored rail chip, so it must NOT appear here or in the composite.
+    assert "identity_kyc" in s1 and "litigation_fir" not in s1, sorted(s1)
     assert "financial" not in s1 and "medical" not in s1 and "lifestyle" not in s1, sorted(s1)
-    # Mobile->PAN now REQUESTS litigation (include* flags), so for the litigation persona
-    # (9739780007 = Paulson, 10 criminal cases) it comes back at the gate and the chip is
-    # already assessed-adverse at Step 1 — not idle. If this env has no live MOBILE_PAN
-    # gateway, the fetch is skipped and it stays idle; accept BOTH (the fetch is real-vendor).
-    assert s1["litigation_fir"]["severity"] in ("bad", "warn", "idle"), s1["litigation_fir"]
 
-    # -- Step 5 (decision) shows the full accumulated read: all 11 groups --
+    # -- Step 5 (decision) shows the full accumulated read: all 10 scored groups --
     g0 = _by_group(_rail(c, app_id, step=5))
-    assert len(g0) == 11, sorted(g0)
+    assert len(g0) == 10 and "litigation_fir" not in g0, sorted(g0)
     # composite score is computed over ALL groups regardless of which step we scope to
     assert _rail(c, app_id, step=1)["safety_score"] == _rail(c, app_id, step=5)["safety_score"]
 

@@ -32,7 +32,6 @@ RULING_BY_FLAG = {
     "velocity_anomaly": ("unresolvable_escalate", ["signals.velocity_graph.velocity_score"]),
     "thin_file": ("needs_income_corroboration", ["signals.account_aggregator.imputed_annual_income"]),
     "income_thin_file": ("needs_income_corroboration", ["signals.account_aggregator.imputed_annual_income"]),
-    "adverse_litigation": ("unresolvable_escalate", ["signals.litigation_fir.cases"]),
     "gst_alert": ("unresolvable_escalate", ["signals.gst.activeAlerts"]),
     # LIFE flags (Phase 2/3): over-insurance & cover-stacking escalate to a human;
     # the cross-signal moral-hazard flag (R-M2, Phase 3) likewise.

@@ -1165,7 +1165,6 @@ def run_bre(
         r013_ml_high(sig),
         r016_geography(sig),
         r017_rppg(sig),
-        r018_litigation(sig),
         r019_gst_alerts(sig),
         r020_mobile_intel(sig),
         r021_tenure(sig),

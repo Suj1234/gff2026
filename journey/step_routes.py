@@ -1344,7 +1344,6 @@ _RAIL_GROUPS = [
     ("medical",             "Medical"),
     ("lifestyle",           "Lifestyle"),
     ("fraud_check",         "Fraud"),
-    ("litigation_fir",      "Litigation"),
     ("velocity_graph",      "Velocity"),
     ("geography",           "Geography"),
     ("insurance_portfolio", "Insurance portfolio"),
@@ -1356,7 +1355,7 @@ _RAIL_GROUPS = [
 # read. The running composite score is still computed over ALL groups — only the
 # CHIP display is scoped, so the underwriter isn't shown a wall of idle chips.
 _STEP_GROUPS = {
-    1: ["identity_kyc", "contactability", "fraud_check", "litigation_fir", "occupation_employer"],
+    1: ["identity_kyc", "contactability", "fraud_check", "occupation_employer"],
     # Step 2 (Product & Cover) collects only the cover CHOICE, which produces no scorer
     # signal of its own — the SI-ceiling reaction is a synthetic "Cover" chip built from
     # R-006 (see _cover_chip, prepended in rail()). The one thing that DID just return is
@@ -1485,10 +1484,10 @@ def _persona(bundle: dict) -> str:
 # The self-employed / both personas surface occupation prominently (it carries GST/business);
 # salaried keeps the lean identity-first view. Composite score still spans ALL groups.
 _STEP1_GROUPS_BY_PERSONA = {
-    "salaried":      ["identity_kyc", "contactability", "fraud_check", "litigation_fir", "occupation_employer"],
-    "self_employed": ["identity_kyc", "occupation_employer", "litigation_fir", "fraud_check", "contactability"],
-    "both":          ["identity_kyc", "occupation_employer", "contactability", "fraud_check", "litigation_fir"],
-    "unknown":       ["identity_kyc", "contactability", "fraud_check", "litigation_fir", "occupation_employer"],
+    "salaried":      ["identity_kyc", "contactability", "fraud_check", "occupation_employer"],
+    "self_employed": ["identity_kyc", "occupation_employer", "fraud_check", "contactability"],
+    "both":          ["identity_kyc", "occupation_employer", "contactability", "fraud_check"],
+    "unknown":       ["identity_kyc", "contactability", "fraud_check", "occupation_employer"],
 }
 
 
@@ -1547,8 +1546,6 @@ def _group_has_data(group_key: str, bundle: dict, step: int = 5) -> bool:
             # email intel from Step 1 (that already showed on Steps 1/2).
             return avail("liveness_facematch")
         return avail("email_intel") or avail("liveness_facematch") or avail("ml_scores")
-    if group_key == "litigation_fir":
-        return isinstance(sig.get("litigation_fir"), dict) and bool(sig["litigation_fir"])
     if group_key == "velocity_graph":
         return avail("velocity_graph")
     if group_key == "geography":

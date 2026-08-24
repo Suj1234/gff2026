@@ -41,20 +41,21 @@ def _rail_groups(bundle: dict) -> list[dict]:
 def test_empty_bundle_is_all_idle_not_green():
     # Nothing collected yet -> every group idle, none claiming a clean pass.
     groups = _rail_groups(_SEED)
-    assert groups, "expected the 11 source groups"
+    assert groups, "expected the 10 scored source groups"
     assert all(g["severity"] == "idle" for g in groups), \
         [g for g in groups if g["severity"] != "idle"]
 
 
-def test_litigation_lights_red_with_real_reason():
+def test_litigation_is_not_a_rail_chip():
+    # Litigation is name-based (unreliable match) — informational card only, never a
+    # scored rail chip, regardless of how adverse the record is.
     b = {**_SEED, "signals": {
         "pan_verify": {"status": "available", "pan": "BHYPM4927Q", "pan_status": "valid"},
         "litigation_fir": {"firs_registered": 1,
                            "cases": [{"civil_criminal": "criminal"} for _ in range(10)]},
     }}
     g = {x["key"]: x for x in _rail_groups(b)}
-    assert g["litigation_fir"]["severity"] == "bad"
-    assert "criminal" in g["litigation_fir"]["why"]
+    assert "litigation_fir" not in g
     # a group with data present is no longer idle
     assert g["identity_kyc"]["severity"] != "idle"
 
@@ -135,7 +136,7 @@ def test_route_exists_and_gates_auth():
 
 if __name__ == "__main__":
     test_empty_bundle_is_all_idle_not_green()
-    test_litigation_lights_red_with_real_reason()
+    test_litigation_is_not_a_rail_chip()
     test_rail_severity_matches_report_band_map()
     test_financial_context_shows_analysing_while_bank_statement_in_flight()
     test_stale_processing_marker_reads_as_error()
