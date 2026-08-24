@@ -339,7 +339,7 @@ def _s_identity(inp, bre, flags) -> tuple[float, list[str], bool]:
     # Assessed if any identity source arrived (PAN / Aadhaar / liveness / CKYC).
     assessed = any(s.available for s in (
         sig.pan_verify, sig.aadhaar_ekyc, sig.liveness_facematch, sig.ckyc))
-    return _result(p, assessed, "facematch/liveness ok, identity fields consistent")
+    return _result(p, assessed, "identity fields consistent")
 
 
 def _email_contactability_penalties(em) -> list[tuple[float, str]]:
