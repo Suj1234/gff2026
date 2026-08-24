@@ -7,7 +7,9 @@ import { CaretUp } from "@phosphor-icons/react"
 // full rail on tap. Standard mobile pattern — keeps the live read visible without
 // stealing form space. Shown only < md (tablet+ get the side rail).
 
-export function RailSheet({ rail, snap }: { rail: Rail | null; snap?: AppSnapshot | null }) {
+export function RailSheet({ rail, snap, showLitigation = false }: {
+  rail: Rail | null; snap?: AppSnapshot | null; showLitigation?: boolean
+}) {
   const [open, setOpen] = useState(false)
   const score = rail?.safety_score ?? null
   const band = rail?.band
@@ -25,7 +27,7 @@ export function RailSheet({ rail, snap }: { rail: Rail | null; snap?: AppSnapsho
         {open && (
           <div className="mx-auto max-h-[70dvh] overflow-y-auto rounded-t-2xl border-t bg-white shadow-[0_-8px_40px_rgba(0,0,0,0.15)] animate-fade-up space-y-3 p-0">
             <RailBody rail={rail} />
-            <div className="px-0 pb-3"><LitigationCard snap={snap ?? null} /></div>
+            {showLitigation && <div className="px-0 pb-3"><LitigationCard snap={snap ?? null} /></div>}
           </div>
         )}
         {/* summary bar (always visible) */}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import type { AppSnapshot, Rail, RailGroup } from "./useJourney"
-import { Pulse, Scales, Warning, SealCheck } from "@phosphor-icons/react"
+import { Pulse, Scales } from "@phosphor-icons/react"
 
 // Right rail — Option A: ONE outer "Agent Read" card containing the gauge + source ROWS
 // (rows, not nested cards, so it stays a card-with-rows and avoids card-in-card stacking).
@@ -79,16 +79,9 @@ export function LitigationCard({ snap }: { snap: AppSnapshot | null }) {
 
   return (
     <div className="rounded-2xl border bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
-      <div className="px-5 py-4 flex items-center justify-between gap-2 border-b bg-[#fbfaf8]">
-        <div className="flex items-center gap-2 min-w-0">
-          <Scales weight="bold" className={`size-4 shrink-0 ${clean ? "text-emerald-500" : "text-amber-500"}`} />
-          <span className="text-[13px] font-semibold truncate">Litigation</span>
-        </div>
-        <span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${clean ? "text-emerald-700" : "text-amber-700"}`}>
-          {clean
-            ? <><SealCheck weight="fill" className="size-3" /> Clean</>
-            : <><Warning weight="fill" className="size-3" /> On record</>}
-        </span>
+      <div className="px-5 py-4 flex items-center gap-2 border-b bg-[#fbfaf8]">
+        <Scales weight="bold" className={`size-4 shrink-0 ${clean ? "text-emerald-500" : "text-amber-500"}`} />
+        <span className="text-[13px] font-semibold truncate">Litigation</span>
       </div>
       <div className="px-5 py-3 text-[12px] text-muted-foreground leading-snug">
         {totalCases} case{totalCases === 1 ? "" : "s"}
@@ -189,13 +182,17 @@ export function RailBody({ rail }: { rail: Rail | null }) {
 }
 
 // Desktop / tablet rail column. Shown lg+ (desktop) and md (tablet) via the caller's grid.
-export function AgentRail({ rail, snap, className = "" }: { rail: Rail | null; snap?: AppSnapshot | null; className?: string }) {
+// Litigation is fetched once at the Step-1 identity gate — showing it on every later step
+// would misread as re-checked-per-step, like the scored groups. Scope it to Step 1 only.
+export function AgentRail({ rail, snap, showLitigation = false, className = "" }: {
+  rail: Rail | null; snap?: AppSnapshot | null; showLitigation?: boolean; className?: string
+}) {
   return (
     <aside className={`shrink-0 self-start sticky top-14 space-y-4 ${className}`} aria-label="What the agent sees">
       <div className="rounded-2xl border bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
         <RailBody rail={rail} />
       </div>
-      <LitigationCard snap={snap ?? null} />
+      {showLitigation && <LitigationCard snap={snap ?? null} />}
     </aside>
   )
 }

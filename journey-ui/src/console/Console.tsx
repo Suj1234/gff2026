@@ -367,11 +367,11 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
             {step === 2 && <PremiumBar premium={premium} subtitle={coverSummary(product)} />}
           </main>
 
-          <AgentRail rail={rail} snap={snap} className="hidden md:block" />
+          <AgentRail rail={rail} snap={snap} showLitigation={step === 1} className="hidden md:block" />
         </div>
       </div>
 
-      <RailSheet rail={rail} snap={snap} />
+      <RailSheet rail={rail} snap={snap} showLitigation={step === 1} />
     </div>
   )
 }
