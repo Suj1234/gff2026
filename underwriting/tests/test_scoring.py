@@ -16,6 +16,7 @@ from underwriting.pipeline import run
 from underwriting.rules import run_bre
 from underwriting.scoring import (
     _lab_severity,
+    email_contactability,
     risk_scores,
     safety_score,
 )
@@ -323,3 +324,66 @@ def test_email_intel_feeds_fraud_subscore():
     row = _row(rows, "fraud_check")
     assert row.risk_sub_score < 100
     assert "disposable" in row.why or "email fraud score" in row.why
+
+
+def test_email_deliverability_feeds_composite_contactability():
+    """The REAL composite (_s_contactability, feeds the decision engine — not just the
+    Step-2 display chip) must also penalize an unreachable/blocked email, so the
+    underwriting decision itself sees the signal, not only the UI."""
+    from underwriting.tests.test_rules import _clean_input, _sig
+
+    inp = _clean_input()
+    inp.signals = _sig(email_intel={
+        "status": "available", "smtp_reachable": False, "is_blocked": True,
+        "has_mx_records": True, "name_match": False,
+    })
+    _, rows, _ = safety_score(inp, run_bre(inp))
+    row = _row(rows, "contactability")
+    assert row.risk_sub_score < 100
+    assert "not reachable" in row.why
+
+
+def test_email_contactability_absent_is_not_assessed():
+    """No email_intel → the Step-2 chip must stay unassessed, never a default-clean 100
+    (that was the original bug: mobile_intel alone used to light up an 'Email
+    contactability' chip with no email ever entered)."""
+    from underwriting.tests.test_rules import _clean_input
+
+    inp = _clean_input()  # fixture's mobile_intel IS available; email_intel is not
+    sub, whys, assessed = email_contactability(inp)
+    assert assessed is False
+
+
+def test_email_contactability_scores_email_facts_only():
+    """Live-vendor-verified shape (2026-08-24): unreachable/disposable/name-mismatch
+    each deduct; is_spam/fraud_risk_score must NOT appear here (fraud-chip-only,
+    no double count across the two Step-2 chips)."""
+    from underwriting.tests.test_rules import _clean_input, _sig
+
+    inp = _clean_input()
+    inp.signals = _sig(email_intel={
+        "status": "available", "is_disposable": True, "is_spam": True,
+        "fraud_risk_score": 0.9, "name_match": False,
+        "smtp_reachable": False, "is_blocked": False, "has_mx_records": True,
+    })
+    sub, whys, assessed = email_contactability(inp)
+    assert assessed is True
+    assert sub < 100
+    why = "; ".join(whys)
+    assert "not reachable" in why
+    assert "disposable" in why
+    assert "does not match" in why
+    assert "spam" not in why and "fraud score" not in why  # fraud-chip-only signals
+
+
+def test_email_contactability_clean_email_scores_100():
+    from underwriting.tests.test_rules import _clean_input, _sig
+
+    inp = _clean_input()
+    inp.signals = _sig(email_intel={
+        "status": "available", "is_disposable": False, "name_match": True,
+        "smtp_reachable": True, "is_blocked": False, "has_mx_records": True,
+    })
+    sub, whys, assessed = email_contactability(inp)
+    assert assessed is True
+    assert sub == 100.0

@@ -342,10 +342,27 @@ def _s_identity(inp, bre, flags) -> tuple[float, list[str], bool]:
     return _result(p, assessed, "facematch/liveness ok, identity fields consistent")
 
 
+def _email_contactability_penalties(em) -> list[tuple[float, str]]:
+    """Email-deliverability penalties shared by the real composite (_s_contactability)
+    and the Step-2 display-only chip (email_contactability). Deliberately excludes
+    is_spam/fraud_risk_score — those stay fraud-chip-only (_s_fraud_check), so the
+    two contactability/fraud readings never double-count the same signal."""
+    p: list[tuple[float, str]] = []
+    if em.available:
+        if em.smtp_reachable is False or em.is_blocked is True or em.has_mx_records is False:
+            p.append((C.EMAIL_UNREACHABLE_PENALTY, "email not reachable / no valid mail server"))
+        if em.is_disposable is True:
+            p.append((C.EMAIL_DISPOSABLE_PENALTY, "disposable email domain"))
+        if em.name_match is False:
+            p.append((C.EMAIL_NAME_MISMATCH_PENALTY, "email name does not match applicant (soft signal)"))
+    return p
+
+
 def _s_contactability(inp, bre, flags) -> tuple[float, list[str], bool]:
     sig = inp.signals
     mi = sig.mobile_intel
     mx = mi.model_extra or {}
+    em = sig.email_intel
     p = []
     if "mobile_pan_mismatch" in flags:
         p.append((10, "mobile holder-name mismatch"))
@@ -360,8 +377,24 @@ def _s_contactability(inp, bre, flags) -> tuple[float, list[str], bool]:
         # Region shift (current != original) is a mild mule/relocation signal.
         if mx.get("region_shift") is True:
             p.append((6, "mobile current region differs from original"))
-    assessed = mi.available or sig.email_intel.available
+    p.extend(_email_contactability_penalties(em))
+    assessed = mi.available or em.available
     return _result(p, assessed, "email/mobile clean")
+
+
+def email_contactability(inp: ProposalInput) -> tuple[float, list[str], bool]:
+    """Email-only contactability read (Step-2 rail chip, journey/step_routes.py).
+
+    NOT part of the §4A composite groups (_SOURCE_SCORERS) — _s_contactability
+    (mobile+email combined, same penalties via _email_contactability_penalties) still
+    owns the Safety Score composite everywhere. This is a display-only score for the
+    moment right after Step-1's email fetch, so the chip's number is honestly
+    email-derived instead of borrowing mobile_intel's read (which is always available
+    earlier, from OTP verification).
+    """
+    em = inp.signals.email_intel
+    p = _email_contactability_penalties(em)
+    return _result(p, em.available, "email valid, reachable, matches applicant")
 
 
 def _s_occupation(inp, bre, flags) -> tuple[float, list[str], bool]:

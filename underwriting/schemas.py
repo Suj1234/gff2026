@@ -370,15 +370,21 @@ class HealthAgentTranscript(_Src):
 
 
 class EmailIntel(_Src):
-    # FACTS from the email-intelligence vendor. The vendor's own 1-100 fraud score
-    # (higher = SAFER) is INVERTED by the adapter to `fraud_risk_score` in [0,1]
-    # (higher = riskier) so it matches the engine's ml_scores polarity — the derived
-    # number is a fact we read; the fraud judgment is ours (scoring.py fraud sub-score).
+    # FACTS from the email-intelligence vendor. The vendor's own fraud score (1-999,
+    # higher = RISKIER — verified against the live gateway, see sources/email.py) is
+    # RESCALED by the adapter to `fraud_risk_score` in [0,1] so it matches the engine's
+    # ml_scores range — the derived number is a fact we read; the fraud judgment is
+    # ours (scoring.py fraud sub-score).
     email: Optional[str] = None
     is_disposable: Optional[bool] = None
     is_spam: Optional[bool] = None
     name_match: Optional[bool] = None
-    fraud_risk_score: Optional[float] = None  # inverted 0-1, higher = riskier
+    fraud_risk_score: Optional[float] = None  # rescaled 0-1, higher = riskier
+    # Deliverability facts (scoring._s_email_contactability) — is the email channel
+    # itself reachable, independent of the fraud/spam read above.
+    smtp_reachable: Optional[bool] = None
+    is_blocked: Optional[bool] = None
+    has_mx_records: Optional[bool] = None
 
 
 class Signals(BaseModel):

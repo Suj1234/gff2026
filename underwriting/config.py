@@ -211,6 +211,16 @@ NATURE_OF_BUSINESS_HAZARD = {
 AADHAAR_NOT_SEEDED_PENALTY = 8      # pan/identity not Aadhaar-linked  # TODO(underwriting-manual)
 
 # ---------------------------------------------------------------------------
+# Email contactability  (A-email)  — is the email channel itself reachable
+# (scoring._s_email_contactability, Step-2 rail chip). Deliberately excludes
+# is_spam/fraud_risk_score — those stay fraud-chip-only (_s_fraud_check), no
+# double-count across the two chips.
+# ---------------------------------------------------------------------------
+EMAIL_UNREACHABLE_PENALTY = 30      # smtp unreachable / blocked / no MX (hard signal)  # TODO(underwriting-manual)
+EMAIL_DISPOSABLE_PENALTY = 12       # disposable domain — weak long-term channel  # TODO(underwriting-manual)
+EMAIL_NAME_MISMATCH_PENALTY = 6     # name_match False — soft signal, vendor match is unreliable  # TODO(underwriting-manual)
+
+# ---------------------------------------------------------------------------
 # Cluster rule  (R-015)
 # ---------------------------------------------------------------------------
 CLUSTER_SOFT_FLAG_MIN = 2  # >= this many soft flags from the cluster set → GREY-ZONE  # TODO(underwriting-manual)

@@ -1556,6 +1556,11 @@ def _group_has_data(group_key: str, bundle: dict, step: int = 5) -> bool:
     if group_key == "insurance_portfolio":
         return avail("iib")
     if group_key == "contactability":
+        if step == 2:
+            # Step 2's chip is relabeled "Email contactability" (see rail() below) — it must
+            # not light up off mobile_intel alone (that arrived back in Step 1's OTP flow),
+            # or the chip shows mobile-driven data under an email-only label.
+            return avail("email_intel")
         return avail("email_intel") or avail("mobile_intel")
     return False
 
@@ -1699,8 +1704,20 @@ def rail(app_id: int, request: Request, step: int = 5, si: int = 0, sub: int = 0
             label = "Email contactability"
         # severity/reason from the SAME scorer the report uses; unchecked group -> idle
         # so a not-yet-returned source never shows a green "clean" it hasn't earned.
-        severity = _LEVEL[C.safety_band(r.risk_sub_score)] if has_data else "idle"
+        sub_score = r.risk_sub_score
+        severity = _LEVEL[C.safety_band(sub_score)] if has_data else "idle"
         why = r.why if has_data else "awaiting source"
+        # Step 2 contactability: the chip is relabeled "Email contactability" (below) — its
+        # NUMBER must come from email-only facts too, not the mobile+email composite
+        # _s_contactability (mobile_intel is always available this early, from Step-1 OTP,
+        # which used to make the chip light up off mobile data under an email-only label).
+        if step == 2 and key == "contactability" and has_data:
+            from underwriting.scoring import email_contactability
+            e_sub, e_whys, e_assessed = email_contactability(inp)
+            has_data = e_assessed
+            sub_score = e_sub
+            severity = _LEVEL[C.safety_band(e_sub)] if e_assessed else "idle"
+            why = "; ".join(w.split(": ", 1)[-1] for w in e_whys) if e_assessed else "awaiting source"
         # Step 2: replace the generic scorer `why` with EMAIL-specific text (the chip is the
         # email check here, not the accumulated fraud/contactability read).
         if step == 2 and has_data and key in ("fraud_check", "contactability"):
@@ -1709,7 +1726,7 @@ def rail(app_id: int, request: Request, step: int = 5, si: int = 0, sub: int = 0
                 why = ew
         g = {
             "key": key, "label": label,
-            "sub_score": r.risk_sub_score,
+            "sub_score": sub_score,
             "severity": severity,          # ok | warn | bad | idle
             "why": why,
         }

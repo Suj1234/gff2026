@@ -128,8 +128,9 @@ export function MobileVerify() {
               <>
                 <Field label="One-time code">
                   <input
+                    type="password"
                     value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                    inputMode="numeric" placeholder="••••••" autoFocus
+                    inputMode="numeric" placeholder="••••••" autoFocus autoComplete="one-time-code"
                     className="mono w-full text-center tracking-[0.5em] text-[22px] py-3 rounded-[var(--radius-sm)] border border-[var(--color-line-2)] bg-surface outline-none focus:border-brand transition-colors placeholder:text-ink-3 placeholder:tracking-[0.3em]"
                   />
                 </Field>

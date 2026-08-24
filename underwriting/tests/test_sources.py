@@ -166,13 +166,15 @@ def test_litigation_adapter_survives_malformed_input():
     assert fir["firs_registered"] == 0  # garbage firDetails is not a real FIR
 
 
-# A canned RAW email-intel response (docs §3 — vendor fraud score is 1-100, HIGHER=SAFER).
+# A canned RAW email-intel response (live-gateway verified 2026-08-24: vendor fraud score
+# is actually 1-999, HIGHER=RISKIER — not the docs' claimed 1-100/higher=safer).
 RAW_EMAIL = {
     "success": True,
     "data": {
         "email": "sujeet.kr2496@gmail.com",
         "verification": {
-            "validity": {"isDisposable": False, "result": "valid"},
+            "validity": {"isDisposable": False, "result": "valid",
+                         "smtpReachable": True, "isBlocked": False, "hasMxRecords": True},
             "individualMatch": [{"name": "sujeet kr", "match": False, "score": 0}],
             "spamRecord": {"isSpam": False, "reportCount": 0},
         },
@@ -181,13 +183,16 @@ RAW_EMAIL = {
 }
 
 
-def test_email_adapter_inverts_polarity():
-    """docs §3: vendor 1-100 higher=safer → internal 0-1 higher=riskier. 83 → 0.17."""
+def test_email_adapter_rescales_score():
+    """Live-verified 2026-08-24: vendor 1-999 higher=riskier → internal 0-1, linear
+    rescale (no inversion). 83 → 83/999 = 0.0831."""
     internal = sources.adapt("email_intel", RAW_EMAIL)
     assert internal["status"] == "available"
     assert internal["is_disposable"] is False and internal["is_spam"] is False
     assert internal["name_match"] is False
-    assert abs(internal["fraud_risk_score"] - 0.17) < 1e-6  # 1 - 83/100
+    assert internal["smtp_reachable"] is True and internal["is_blocked"] is False
+    assert internal["has_mx_records"] is True
+    assert abs(internal["fraud_risk_score"] - 0.0831) < 1e-4  # 83 / 999
     assert "fraudRisk" not in internal  # vendor verdict label dropped (§1.8)
 
 
@@ -199,12 +204,13 @@ def test_email_adapter_missing_score_is_absent_not_zero():
 
 def test_email_adapter_survives_malformed_input():
     """Trust boundary (§11): a non-list individualMatch / non-dict nested field / a
-    stringified score must degrade, never crash. A stringified '83' still inverts."""
+    stringified score must degrade, never crash. A stringified '83' still rescales."""
     assert sources.adapt("email_intel", None)["status"] == "unavailable"
     # individualMatch arriving as a string used to IndexError then AttributeError.
     assert sources.adapt("email_intel", {"data": {"verification": {"individualMatch": "x"}}})["name_match"] is None
     assert sources.adapt("email_intel", {"data": {"verification": "x"}})["is_spam"] is None  # non-dict nested
-    assert sources.adapt("email_intel", {"data": {"fraud": {"risk": {"score": "83"}}}})["fraud_risk_score"] == 0.17
+    score = sources.adapt("email_intel", {"data": {"fraud": {"risk": {"score": "83"}}}})["fraud_risk_score"]
+    assert abs(score - 0.0831) < 1e-4
     # a bool must not be treated as a numeric score (True/100 nonsense).
     assert sources.adapt("email_intel", {"data": {"fraud": {"risk": {"score": True}}}})["fraud_risk_score"] is None
 
