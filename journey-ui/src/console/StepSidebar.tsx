@@ -17,7 +17,7 @@ export function StepSidebar({
   const pct = Math.round((doneCount / TOTAL) * 100)
 
   return (
-    <nav className="hidden lg:block w-80 xl:w-96 shrink-0 p-5 self-start sticky top-[92px] space-y-4" aria-label="Application steps">
+    <nav className="hidden lg:block w-80 xl:w-96 shrink-0 p-5 self-start sticky top-14 space-y-4" aria-label="Application steps">
       {/* Card 1 — progress + steps */}
       <div className="rounded-2xl elev-card p-4">
         <div className="px-1 pb-4 mb-3 border-b">

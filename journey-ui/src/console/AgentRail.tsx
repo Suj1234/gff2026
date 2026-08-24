@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
-import type { Rail, RailGroup } from "./useJourney"
-import { Pulse } from "@phosphor-icons/react"
+import type { AppSnapshot, Rail, RailGroup } from "./useJourney"
+import { Pulse, Scales, Warning, SealCheck } from "@phosphor-icons/react"
 
 // Right rail — Option A: ONE outer "Agent Read" card containing the gauge + source ROWS
 // (rows, not nested cards, so it stays a card-with-rows and avoids card-in-card stacking).
@@ -64,8 +64,43 @@ export function Gauge({ value, tone, size = 84 }: { value: number | null; tone: 
   )
 }
 
+// Litigation is a NAME-BASED match against court/FIR records — an unreliable identifier
+// (common names collide) — so it is informational only, never scored into the Safety
+// Score or the underwriting decision (see underwriting/config.py SAFETY_SCORE_WEIGHTS).
+// Rendered as its own row here (facts only, no sub-score), not among the scored groups.
+function LitigationRow({ snap }: { snap: AppSnapshot | null }) {
+  const lit = snap?.signals.litigation_fir
+  if (!lit || lit.status !== "available") return null
+  const cases = lit.cases || []
+  const criminal = cases.filter((c) => c.civil_criminal === "criminal").length
+  const firs = lit.firs_registered || 0
+  const clean = criminal === 0 && firs === 0 && !(lit.pending_cases || 0)
+
+  return (
+    <li className="px-5 py-3 animate-fade-up">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <Scales weight="bold" className={`size-3.5 shrink-0 ${clean ? "text-emerald-500" : "text-amber-500"}`} />
+          <span className="text-[13px] font-semibold truncate">Litigation</span>
+        </div>
+        <span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${clean ? "text-emerald-700" : "text-amber-700"}`}>
+          {clean
+            ? <><SealCheck weight="fill" className="size-3" /> Clean</>
+            : <><Warning weight="fill" className="size-3" /> On record</>}
+        </span>
+      </div>
+      <p className="mt-1 text-[12px] text-muted-foreground leading-snug pl-[22px]">
+        {cases.length} case{cases.length === 1 ? "" : "s"}
+        {criminal > 0 ? `, ${criminal} criminal` : ""}
+        {firs > 0 ? `, ${firs} FIR${firs === 1 ? "" : "s"}` : ""}
+        {" — name-based match, not scored into the Safety Score."}
+      </p>
+    </li>
+  )
+}
+
 // The card interior — gauge header + source rows + footer. Shared by rail card and sheet.
-export function RailBody({ rail }: { rail: Rail | null }) {
+export function RailBody({ rail, snap }: { rail: Rail | null; snap?: AppSnapshot | null }) {
   const score = rail?.safety_score ?? null
   const band = rail?.band
   const assessed = rail?.assessed_count ?? 0
@@ -143,6 +178,7 @@ export function RailBody({ rail }: { rail: Rail | null }) {
             </li>
           )
         })}
+        <LitigationRow snap={snap ?? null} />
       </ul>
 
       <div className="px-5 py-2.5 border-t bg-[#fbfaf8] flex items-center justify-between text-[11px] text-muted-foreground">
@@ -154,11 +190,11 @@ export function RailBody({ rail }: { rail: Rail | null }) {
 }
 
 // Desktop / tablet rail column. Shown lg+ (desktop) and md (tablet) via the caller's grid.
-export function AgentRail({ rail, className = "" }: { rail: Rail | null; className?: string }) {
+export function AgentRail({ rail, snap, className = "" }: { rail: Rail | null; snap?: AppSnapshot | null; className?: string }) {
   return (
-    <aside className={`shrink-0 self-start sticky top-[92px] ${className}`} aria-label="What the agent sees">
+    <aside className={`shrink-0 self-start sticky top-14 ${className}`} aria-label="What the agent sees">
       <div className="rounded-2xl border bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
-        <RailBody rail={rail} />
+        <RailBody rail={rail} snap={snap} />
       </div>
     </aside>
   )

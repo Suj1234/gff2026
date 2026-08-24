@@ -1,5 +1,5 @@
 import { useState } from "react"
-import type { Rail } from "./useJourney"
+import type { AppSnapshot, Rail } from "./useJourney"
 import { RailBody, Gauge, railTone, railRows } from "./AgentRail"
 import { CaretUp } from "@phosphor-icons/react"
 
@@ -7,7 +7,7 @@ import { CaretUp } from "@phosphor-icons/react"
 // full rail on tap. Standard mobile pattern — keeps the live read visible without
 // stealing form space. Shown only < md (tablet+ get the side rail).
 
-export function RailSheet({ rail }: { rail: Rail | null }) {
+export function RailSheet({ rail, snap }: { rail: Rail | null; snap?: AppSnapshot | null }) {
   const [open, setOpen] = useState(false)
   const score = rail?.safety_score ?? null
   const band = rail?.band
@@ -24,7 +24,7 @@ export function RailSheet({ rail }: { rail: Rail | null }) {
         {/* expanded panel */}
         {open && (
           <div className="mx-auto max-h-[70dvh] overflow-y-auto rounded-t-2xl border-t bg-white shadow-[0_-8px_40px_rgba(0,0,0,0.15)] animate-fade-up">
-            <RailBody rail={rail} />
+            <RailBody rail={rail} snap={snap} />
           </div>
         )}
         {/* summary bar (always visible) */}

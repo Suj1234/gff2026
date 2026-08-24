@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import type { AppSnapshot } from "./useJourney"
-import { SealCheck, Warning, Buildings, EnvelopeSimple, FingerprintSimple, ShieldCheck, IdentificationCard, Scales } from "@phosphor-icons/react"
+import { SealCheck, Warning, Buildings, EnvelopeSimple, FingerprintSimple, ShieldCheck, IdentificationCard } from "@phosphor-icons/react"
 
 // Center panel for Step 1. Editability-spectrum layout (per the reference):
 //   HERO card   = core identity, PAN/Aadhaar-verified. Heaviest weight, NOT editable.
@@ -140,39 +140,6 @@ function PanGate({ appId, onPrefilled }: { appId: number | null; onPrefilled?: (
   )
 }
 
-// Litigation is a NAME-BASED match against court/FIR records — an unreliable identifier
-// (common names collide) — so it is informational only here, not part of the Safety
-// Score or the underwriting decision (see underwriting/config.py SAFETY_SCORE_WEIGHTS).
-// Shown as its own card rather than a scored rail chip.
-function LitigationCard({ snap }: { snap: AppSnapshot }) {
-  const lit = snap.signals.litigation_fir
-  if (!lit || lit.status !== "available") return null
-  const cases = lit.cases || []
-  const criminal = cases.filter((c) => c.civil_criminal === "criminal").length
-  const firs = lit.firs_registered || 0
-  const clean = criminal === 0 && firs === 0 && !(lit.pending_cases || 0)
-
-  return (
-    <section>
-      <SectionHead icon={Scales} title="Litigation">
-        {clean
-          ? <Tag tone="ok"><SealCheck className="size-3" weight="fill" /> No adverse record</Tag>
-          : <Tag tone="warn"><Warning className="size-3" weight="fill" /> On record</Tag>}
-      </SectionHead>
-      <div className="rounded-xl bg-[#faf9f7] px-4 py-1">
-        <FactRow k="Cases found" v={cases.length ? String(cases.length) : "0"} />
-        {criminal > 0 && <FactRow k="Criminal cases" v={String(criminal)} />}
-        {firs > 0 && <FactRow k="FIRs registered" v={String(firs)} />}
-        <FactRow k="Match confidence" v={lit.confidence} />
-        <div className="py-2.5 text-[12px] text-muted-foreground leading-snug">
-          Name-based match — not a verified identity link, so it isn't scored into the
-          Safety Score. Shown here for the underwriter's awareness only.
-        </div>
-      </div>
-    </section>
-  )
-}
-
 export function IdentityCenter({ snap, appId, onPrefilled, email, onEmailChange }: {
   snap: AppSnapshot; appId: number | null; onPrefilled?: () => void
   email: string; onEmailChange: (v: string) => void
@@ -301,8 +268,6 @@ export function IdentityCenter({ snap, appId, onPrefilled, email, onEmailChange 
             </div>
           )}
         </section>
-
-        <LitigationCard snap={snap} />
 
         {/* The ONE user-entered field — boxed input signals "editable". Placed right after
             Aadhaar so both identity-verification actions sit together, for both personas. */}

@@ -292,13 +292,15 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
-      {/* BANNER 1 — AURUM (product) */}
-      <div className="flex items-center gap-2 px-6 lg:px-8 h-9 bg-primary text-primary-foreground shrink-0 sticky top-0 z-30">
-        <ShieldCheck weight="fill" className="size-3.5" />
-        <span className="text-[13px] font-extrabold tracking-tight">AURUM</span>
-      </div>
-      {/* BANNER 2 — Acme Life Insurance (company) */}
-      <header className="flex items-center gap-3 px-6 lg:px-8 h-14 bg-card border-b shrink-0 sticky top-9 z-30">
+      {/* HEADER — two banners side by side: AURUM (product) + Acme Life Insurance (company) */}
+      <header className="flex items-center gap-3 px-6 lg:px-8 h-14 bg-card border-b shrink-0 sticky top-0 z-30">
+        <span className="flex items-center gap-1.5">
+          <span className="grid place-items-center size-7 rounded-lg bg-primary text-primary-foreground">
+            <ShieldCheck weight="fill" className="size-4" />
+          </span>
+          <span className="text-[15px] font-extrabold tracking-tight">AURUM</span>
+        </span>
+        <span className="h-5 w-px bg-border" />
         <span className="text-[15px] font-extrabold tracking-tight">Acme Life Insurance</span>
         <span className="ml-auto flex items-center gap-3">
           <span className="hidden sm:flex items-center gap-2 rounded-full px-2.5 py-1 bg-muted">
@@ -365,11 +367,11 @@ export function Console({ appId, variant }: { appId: number | null; variant: Var
             {step === 2 && <PremiumBar premium={premium} subtitle={coverSummary(product)} />}
           </main>
 
-          <AgentRail rail={rail} className="hidden md:block" />
+          <AgentRail rail={rail} snap={snap} className="hidden md:block" />
         </div>
       </div>
 
-      <RailSheet rail={rail} />
+      <RailSheet rail={rail} snap={snap} />
     </div>
   )
 }
@@ -384,19 +386,22 @@ export function ConsoleShell({ loading }: { loading?: boolean }) {
   void loading
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
-      {/* BANNERS — identical structure/height to the real ones. */}
-      <div className="flex items-center gap-2 px-6 lg:px-8 h-9 bg-primary text-primary-foreground shrink-0 sticky top-0 z-30">
-        <ShieldCheck weight="fill" className="size-3.5" />
-        <span className="text-[13px] font-extrabold tracking-tight">AURUM</span>
-      </div>
-      <header className="flex items-center gap-3 px-6 lg:px-8 h-14 bg-card border-b shrink-0 sticky top-9 z-30">
+      {/* HEADER — identical structure/height to the real one. */}
+      <header className="flex items-center gap-3 px-6 lg:px-8 h-14 bg-card border-b shrink-0 sticky top-0 z-30">
+        <span className="flex items-center gap-1.5">
+          <span className="grid place-items-center size-7 rounded-lg bg-primary text-primary-foreground">
+            <ShieldCheck weight="fill" className="size-4" />
+          </span>
+          <span className="text-[15px] font-extrabold tracking-tight">AURUM</span>
+        </span>
+        <span className="h-5 w-px bg-border" />
         <span className="text-[15px] font-extrabold tracking-tight">Acme Life Insurance</span>
         <span className="ml-auto text-xs text-muted-foreground animate-pulse">Preparing your application…</span>
       </header>
 
       <div className="flex-1 flex min-h-0">
         {/* SIDEBAR skeleton — same width/position as StepSidebar, gray rows (no labels). */}
-        <nav className="hidden lg:block w-80 xl:w-96 shrink-0 p-5 self-start sticky top-[92px] space-y-4">
+        <nav className="hidden lg:block w-80 xl:w-96 shrink-0 p-5 self-start sticky top-14 space-y-4">
           <div className="rounded-2xl elev-card p-4 space-y-5">
             {Array.from({ length: 7 }).map((_, i) => (
               <div key={i} className="flex gap-3">
@@ -436,7 +441,7 @@ export function ConsoleShell({ loading }: { loading?: boolean }) {
           </main>
 
           {/* RAIL skeleton — same card frame as AgentRail, gray placeholders (no labels). */}
-          <aside className="hidden md:block shrink-0 self-start sticky top-[92px]">
+          <aside className="hidden md:block shrink-0 self-start sticky top-14">
             <div className="rounded-2xl border bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-5 space-y-4">
               <div className="flex items-center gap-4">
                 <div className="size-[72px] rounded-full bg-black/[0.06] animate-pulse shrink-0" />

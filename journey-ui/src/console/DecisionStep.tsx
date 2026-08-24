@@ -79,9 +79,6 @@ const GROUPS: { key: string; label: string; sections: string[]; signals: string[
   { key: "geography",           label: "Geography",             sections: ["geography"], signals: ["geography"] },
   { key: "fraud_check",         label: "Fraud",                 sections: ["fraud_check"], signals: [] },
   { key: "insurance_portfolio", label: "Insurance portfolio",   sections: ["insurance_portfolio_iib"], signals: [] },
-  // No `sections` entry (name-based match, not scored into Safety Score — see IdentityCenter's
-  // LitigationCard) — this card shows facts only, never a risk-level badge, via `signals` alone.
-  { key: "litigation_fir",      label: "Litigation & FIR",      sections: [], signals: ["litigation_fir"] },
 ]
 const SCORE_LABEL: Record<string, string> = Object.fromEntries(GROUPS.map((g) => [g.key, g.label]))
 

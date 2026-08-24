@@ -374,9 +374,6 @@ def _s_contactability(inp, bre, flags) -> tuple[float, list[str], bool]:
         vm = mi.vintage_months if mi.vintage_months is not None else mx.get("vintage_months")
         if isinstance(vm, (int, float)) and vm < C.MOBILE_RECENT_NUMBER_MAX_MONTHS:
             p.append((15, f"mobile number only {int(vm)}mo old (recent)"))
-        # Region shift (current != original) is a mild mule/relocation signal.
-        if mx.get("region_shift") is True:
-            p.append((6, "mobile current region differs from original"))
     p.extend(_email_contactability_penalties(em))
     assessed = mi.available or em.available
     return _result(p, assessed, "email/mobile clean")
