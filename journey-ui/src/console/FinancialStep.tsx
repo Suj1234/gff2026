@@ -11,7 +11,7 @@ import { Check, FilePdf, SealCheck, Spinner, Warning } from "@phosphor-icons/rea
 // so this step is what turns the Step-2 "indicative" premium into a real decision at Step 5.
 
 const SOURCES = ["Salary", "Business income", "Professional fees", "Investments", "Rental income"]
-const PURPOSES = ["Family protection", "Loan / liability cover", "Income replacement", "Wealth transfer"]
+const PURPOSES = ["Family protection", "Loan / liability cover", "Business protection"]
 
 const inr = (n: number) => "₹" + n.toLocaleString("en-IN")
 
